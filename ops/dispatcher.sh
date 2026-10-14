@@ -131,7 +131,8 @@ wake() {
   fi
   log "done $agent $key exit=$rc secs=$secs $(jq -r '"model=\(.model // "?") in=\(.input // "?") out=\(.output // "?")"' <<<"$usage")"
   jq -c --arg t "$(now)" --arg a "$agent" --arg k "$key" --arg r "${RUNTIME[$agent]}" --argjson rc "$rc" --argjson s "$secs" \
-    '{time: $t, agent: $a, runtime: $r, key: $k, exit: $rc, secs: $s} + .' <<<"$usage" >> "$STATE/runs.jsonl"
+    --arg task "$task" '{time: $t, agent: $a, runtime: $r, key: $k, exit: $rc, secs: $s} + . + {task: $task}' \
+    <<<"$usage" >> "$STATE/runs.jsonl"
 
   # Two failed runs in a row on the same item: stop retrying and hand it to the human.
   if [ "$rc" -eq 0 ]; then
@@ -217,18 +218,20 @@ run_agent() {
   esac
 }
 
-# run_usage <agent> <output file>: {provider, model, input, output, fallbacks, tools} as JSON, {} if unreadable.
+# run_usage <agent> <output file>: {provider, model, input, cached, output, fallbacks, tools} as JSON, {} if unreadable.
+# input excludes cached tokens (prompt re-read from the provider's cache), as both runtimes report it.
 # tools = number of tool calls that ran (OpenClaw: distinct tools used; Hermes: tool calls).
 # Hermes reports only the requested model; a fallback shows up in its text output, not here.
 run_usage() {
   case ${RUNTIME[$1]} in
     openclaw) sed -n '/^{/,$p' "$2" | jq -c '.meta.agentMeta // {} | {provider, model,
-                input: .usage.input, output: .usage.output, fallbacks: (.fallbackAttempts // [] | length),
+                input: .usage.input, cached: .usage.cacheRead, output: .usage.output,
+                fallbacks: (.fallbackAttempts // [] | length),
                 tools: (.terminalReceipt.successfulToolNames // [] | map(select(. != "tool_search")) | length)}' ;;
     hermes) jq -cRn '[inputs | fromjson? // empty] as $l
               | ($l | map(select(.type == "system")) | first // {}) as $init
               | ($l | map(select(.type == "result")) | last // {}) as $r
-              | {model: $init.model, input: $r.tokens.input, output: $r.tokens.output,
+              | {model: $init.model, input: $r.tokens.input, cached: $r.tokens.cache_read, output: $r.tokens.output,
                  tools: ($l | map(select(.type == "tool_use")) | length)}' "$2" ;;
   esac 2>/dev/null || echo '{}'
 }
@@ -311,6 +314,18 @@ board() {
 save_board() { [ "$DRY_RUN" = 1 ] || board > "$STATE/board.json"; }
 
 current=$(board)
+
+# A token report on every closed ticket, once: its runs and its PRs' runs, from runs.jsonl (ops/token_report.py, no model).
+mkdir -p "$STATE/reported"
+for n in $(jq -r '.[] | select(.s == "CLOSED") | .n' <<<"$current"); do
+  [ -e "$STATE/reported/$n" ] && continue
+  if [ "$DRY_RUN" = 1 ]; then echo "would: post the token report on #$n"; continue; fi
+  if python3 "$ROOT/ops/token_report.py" issue "$n" > "$STATE/reported/$n.md" &&
+     gh issue comment "$n" -R "$REPO" --body-file "$STATE/reported/$n.md" >/dev/null; then
+    touch "$STATE/reported/$n"
+    log "token report posted on #$n"
+  fi
+done
 
 # An assign:orchestrator issue wakes it once. If the label is still there afterwards, only a board change wakes it again.
 for n in $(issues_with assign:orchestrator); do
