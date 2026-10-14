@@ -6,42 +6,27 @@ For humans, this is also the design of the team.
 ## Life of a ticket
 
 All work starts as a ticket: a GitHub issue. A ticket ends as a merged PR, or closed with a reason.
-Read the diagram top to bottom. "yes" arrows are the main path, "no" arrows send the PR back to step 3, dotted arrows are side exits.
+Each box is one step, top to bottom. ✓ moves the ticket to the next box; ✗ sends the PR back to step 3.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
 flowchart TD
   S1["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you or an agent"]
-  S2["<b>2 · Triaged</b> · orchestrator<br/>Goal, Acceptance, Needs<br/>label assign:builder-*"]
-  S3["<b>3 · Built</b> · builder<br/>PR: Closes #N<br/>label needs-test"]
-  S4{{"<b>4 · CI</b><br/>pytest green?"}}
-  S5{{"<b>5 · Tested</b> · tester<br/>works on test data?"}}
-  S6{{"<b>6 · Reviewed</b> · reviewer<br/>does what the ticket asks?"}}
-  S7["<b>7 · Merged</b> · you<br/>label ready-to-merge<br/>ticket closes"]
-  CLOSED(["Closed with a reason"])
-  HUMAN(["Waits for you<br/>label needs-human"])
+  S2["<b>2 · Triaged</b> · orchestrator<br/>✓ adds Goal, Acceptance, Needs → label assign:builder-*<br/>too big → split into new tickets · duplicate → closed"]
+  S3["<b>3 · Built</b> · builder<br/>✓ opens a PR that says Closes #N → label needs-test<br/>sent back 3 times → label needs-human, waits for you"]
+  S4["<b>4 · CI</b> · GitHub Actions<br/>✓ pytest passes<br/>✗ red → back to step 3"]
+  S5["<b>5 · Tested</b> · tester<br/>✓ works on test data → status test/passed, label needs-review<br/>✗ fails → back to step 3, with a Lesson line<br/>a problem outside this PR → files a new bug ticket"]
+  S6["<b>6 · Reviewed</b> · reviewer<br/>✓ does what the ticket asks → status review/approved<br/>✗ doesn't → back to step 3, with a Lesson line"]
+  S7["<b>7 · Merged</b> · you<br/>label ready-to-merge → you merge<br/>the ticket closes"]
 
-  S1 --> S2 --> S3 --> S4
-  S4 -->|yes| S5
-  S5 -->|"yes · test/passed"| S6
-  S6 -->|"yes · review/approved"| S7
-
-  S4 -->|"no · sent back"| S3
-  S5 -->|"no · sent back + Lesson"| S3
-  S6 -->|"no · sent back + Lesson"| S3
-
-  S2 -.->|"duplicate or not needed"| CLOSED
-  S2 -.->|"too big: split"| S1
-  S3 -.->|"3rd send-back"| HUMAN
-  S5 -.->|"new bug ticket"| S1
+  S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
 
   classDef ticket fill:#24292f,stroke:#24292f,color:#fff
   classDef step fill:#eef2ff,stroke:#6366f1,color:#000
   classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
-  classDef side fill:#fff3cd,stroke:#b58105,color:#000
   class S1 ticket
   class S2,S3,S4,S5,S6 step
   class S7 done
-  class CLOSED,HUMAN side
 ```
 
 1. **GitHub ticket.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
