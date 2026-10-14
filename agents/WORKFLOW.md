@@ -145,7 +145,7 @@ and caps each run at 20 minutes. It checks from the end of the pipeline backward
 2. **tester:** the oldest PR with `needs-test` whose CI is green. Red CI: the dispatcher sends the PR back. Still running: wait.
 3. **builder:** its oldest PR with `changes-requested`, otherwise its oldest `assign:<builder>` issue that has no open PR.
    The tester is woken the same way for its own test-writing issues.
-4. **orchestrator:** an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
+4. **orchestrator:** once a day, new `Lesson:` lines (see LESSONS.md below). Otherwise an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
    (a new or relabelled issue, a merged or closed PR).
 
 Anything with `needs-human` is skipped. When nothing is waiting, no agent runs and no tokens are spent.
@@ -176,7 +176,8 @@ The repo is `nikhil-kunapareddy/daily-briefing`. `gh` is already signed in.
 What the team has learned from rejections, so the same mistake isn't made twice.
 
 1. The tester and reviewer end every send-back with a `Lesson:` line (rule 4).
-2. Once a day, a script collects the `Lesson:` lines from the last 24 hours.
+2. Once a day, the dispatcher collects the `Lesson:` lines (at the start of a line) posted since its last collection,
+   and wakes the orchestrator with them. It skips this while a `lessons` PR is still open.
 3. The orchestrator merges them into `agents/LESSONS.md`: no duplicates, at most 20 lines, each with a link to its PR.
    It opens a PR labelled `lessons`.
 4. The human merges it. No lesson reaches the agents without review.

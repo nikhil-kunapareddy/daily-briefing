@@ -238,7 +238,24 @@ for agent in "${BUILDERS[@]}"; do
   done
 done
 
-# ---------------------------------------------------------------- 4. orchestrator
+# ---------------------------------------------------------------- 4. orchestrator: daily lessons
+
+# Once a day, collect the Lesson: lines (at the start of a line) posted since the last collection. The orchestrator
+# folds them into agents/LESSONS.md in a PR labelled lessons, which the human merges. Skipped while one is open.
+today=$(date -u +%F)
+if [ "$(cat "$STATE/lessons-day" 2>/dev/null)" != "$today" ] && [ -z "$(prs_with lessons)" ]; then
+  since=$(cat "$STATE/lessons-since" 2>/dev/null || date -u -d '1 day ago' +%FT%TZ)
+  lessons=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
+    --jq '.[] | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"')
+  if [ "$DRY_RUN" != 1 ]; then echo "$today" > "$STATE/lessons-day"; now > "$STATE/lessons-since"; fi
+  if [ -n "$lessons" ]; then
+    wake orchestrator lessons "Collect lessons. These Lesson: lines were posted since $since:
+$lessons"
+    exit 0
+  fi
+fi
+
+# ---------------------------------------------------------------- 5. orchestrator: the board
 
 board() {
   gh issue list -R "$REPO" --state all --limit 300 --json number,state,labels \
