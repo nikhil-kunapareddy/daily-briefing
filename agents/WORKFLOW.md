@@ -10,7 +10,7 @@ Read the diagram top to bottom. "yes" arrows are the main path, "no" arrows send
 
 ```mermaid
 flowchart TD
-  S1["<b>1 · Filed</b><br/>new issue, by you or an agent"]
+  S1["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you or an agent"]
   S2["<b>2 · Triaged</b> · orchestrator<br/>Goal, Acceptance, Needs<br/>label assign:builder-*"]
   S3["<b>3 · Built</b> · builder<br/>PR: Closes #N<br/>label needs-test"]
   S4{{"<b>4 · CI</b><br/>pytest green?"}}
@@ -34,15 +34,17 @@ flowchart TD
   S3 -.->|"3rd send-back"| HUMAN
   S5 -.->|"new bug ticket"| S1
 
+  classDef ticket fill:#24292f,stroke:#24292f,color:#fff
   classDef step fill:#eef2ff,stroke:#6366f1,color:#000
   classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
   classDef side fill:#fff3cd,stroke:#b58105,color:#000
-  class S1,S2,S3,S4,S5,S6 step
+  class S1 ticket
+  class S2,S3,S4,S5,S6 step
   class S7 done
   class CLOSED,HUMAN side
 ```
 
-1. **Filed.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
+1. **GitHub ticket.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
    `change-request`. The tester files `bug` tickets. Any agent may file `tech-debt`. Only the orchestrator assigns.
 2. **Triaged** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
    ones not worth doing, with a reason. Every ticket gets Goal, Acceptance, Needs and Files likely touched.
