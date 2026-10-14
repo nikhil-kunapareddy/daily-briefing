@@ -81,7 +81,7 @@ comment() { act gh pr comment "$1" -R "$REPO" --body "$2" >/dev/null; }
 # wake <agent> <key> <task line>. key names the issue or PR, e.g. pr-12, issue-7, board.
 wake() {
   local agent=$1 key=$2 task=$3
-  local stamp msg out rc start secs usage
+  local stamp msg out rc start secs usage before
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   msg=$STATE/runs/$stamp-$agent-$key.msg.md
   out=$STATE/runs/$stamp-$agent-$key.out       # stdout: the runtime's JSON. stderr goes to .err
@@ -103,12 +103,18 @@ wake() {
   [ "$DRY_RUN" = 1 ] && return 0
 
   bash "$ROOT/agents/sync-prompts.sh" "$agent"  # merged prompt changes take effect on this run
+  before=$(item_state "$key")
   start=$(date +%s)
   set +e
   run_agent "$agent" "$key-$stamp" "$msg" > "$out" 2> "${out%.out}.err"
   rc=$?
   set -e
   secs=$(( $(date +%s) - start ))
+  # A clean exit that changed nothing on its issue or PR (no label, commit, comment or PR) still counts as a failure.
+  if [ "$rc" -eq 0 ] && [ -n "$before" ] && [ "$before" = "$(item_state "$key")" ]; then
+    rc=3
+    log "no progress: $agent left $key unchanged"
+  fi
   usage=$(run_usage "$agent" "$out"); [ -n "$usage" ] || usage='{}'
   log "done $agent $key exit=$rc secs=$secs $(jq -r '"model=\(.model // "?") in=\(.input // "?") out=\(.output // "?")"' <<<"$usage")"
   jq -c --arg t "$(now)" --arg a "$agent" --arg k "$key" --arg r "${RUNTIME[$agent]}" --argjson rc "$rc" --argjson s "$secs" \
@@ -129,6 +135,20 @@ wake() {
   else
     echo 1 > "$STATE/fails/$agent-$key"
   fi
+}
+
+# item_state <key>: what a useful run on pr-N or issue-N changes, as one line. Empty for other keys.
+#   PR: labels, latest commit, comment count. Issue: labels, state, comment count, PRs whose branch names it.
+item_state() {
+  local n=${1#*-}
+  case $1 in
+    pr-*) gh pr view "$n" -R "$REPO" --json labels,headRefOid,comments \
+            --jq '[([.labels[].name] | sort), .headRefOid, (.comments | length)] | tostring' 2>/dev/null || true ;;
+    issue-*) echo "$(gh issue view "$n" -R "$REPO" --json labels,state,comments \
+                --jq '[([.labels[].name] | sort), .state, (.comments | length)] | tostring' 2>/dev/null || true)" \
+              "$(gh pr list -R "$REPO" --state all --limit 100 --json headRefName \
+                --jq "[.[] | select(.headRefName | test(\"/$n-\"))] | length" 2>/dev/null || true)" ;;
+  esac
 }
 
 # run_agent <agent> <session> <message file>: one headless run, output to stdout.
