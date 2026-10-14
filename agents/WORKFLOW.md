@@ -139,6 +139,8 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
    Never touch the live data in `/var/lib/daily-briefing/` or the live app on port 8000. Test servers use port 8100 or above.
 8. **Keys stay secret.** Never print, paste or commit a key or token.
 9. **Stuck or unsure:** comment on the issue or PR with what you tried and what you need, then add `needs-human`. Don't guess.
+10. **Use your tools; never pretend.** Run every command with your tool. Never write a command or a tool call as text in your
+    reply. Only report output a tool gave you, and quote it. The dispatcher counts a run with no tool calls as a failed run.
 
 ## Who wakes when
 

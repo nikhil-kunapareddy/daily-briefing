@@ -19,6 +19,9 @@
     },
   },
 
+  // Offer the allowed tools directly. With Tool Search on, a model must look a tool up before calling it.
+  tools: { toolSearch: false },
+
   agents: {
     ownership: "explicit",
     defaults: {
@@ -35,7 +38,9 @@
           primary: "ollama-cloud/gpt-oss:120b",
           fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
         },
-        tools: { exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },   // allowlist: exec-allowlist.txt
+        // Only the tools a builder needs, offered directly. Fewer tools, fewer malformed tool calls.
+        tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
+                 exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },   // exec allowlist: exec-allowlist.txt
       },
       "builder-web": {
         name: "builder-web",
@@ -46,7 +51,8 @@
           primary: "ollama-cloud/gpt-oss:120b",
           fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
         },
-        tools: { exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
+        tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
+                 exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
       },
       "tester": {
         name: "tester",
@@ -57,7 +63,8 @@
           primary: "ollama-cloud/gemma4:31b",
           fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
         },
-        tools: { exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
+        tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
+                 exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
       },
     },
   },

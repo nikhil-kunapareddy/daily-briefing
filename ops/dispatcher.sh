@@ -81,12 +81,14 @@ comment() { act gh pr comment "$1" -R "$REPO" --body "$2"$'\n\n'"— dispatcher 
 # wake <agent> <key> <task line>. key names the issue or PR, e.g. pr-12, issue-7, board.
 wake() {
   local agent=$1 key=$2 task=$3
-  local stamp msg out rc start secs usage before model
+  local stamp msg out rc start secs usage before model backup=""
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   msg=$STATE/runs/$stamp-$agent-$key.msg.md
   out=$STATE/runs/$stamp-$agent-$key.out       # stdout: the runtime's JSON. stderr goes to .err
 
-  model=$(model_of "$agent")
+  # A retry after a failed run uses the agent's first backup model, so the same model glitch doesn't repeat.
+  if [ -e "$STATE/fails/$agent-$key" ]; then backup=$(backup_of "$agent"); fi
+  if [ -n "$backup" ]; then model=$(short_model "${backup##* }"); else model=$(model_of "$agent"); fi
   {
     echo "Wake-up from the dispatcher, $(now)."
     echo
@@ -104,23 +106,29 @@ wake() {
     esac
   } > "$msg"
 
-  log "wake $agent $key: $task"
+  log "wake $agent $key: $task${backup:+ (retry on backup model $backup)}"
   [ "$DRY_RUN" = 1 ] && return 0
 
   bash "$ROOT/agents/sync-prompts.sh" "$agent"  # merged prompt changes take effect on this run
   before=$(item_state "$key")
   start=$(date +%s)
   set +e
-  run_agent "$agent" "$key-$stamp" "$msg" > "$out" 2> "${out%.out}.err"
+  run_agent "$agent" "$key-$stamp" "$msg" "$backup" > "$out" 2> "${out%.out}.err"
   rc=$?
   set -e
   secs=$(( $(date +%s) - start ))
-  # A clean exit that changed nothing on its issue or PR (no label, commit, comment or PR) still counts as a failure.
-  if [ "$rc" -eq 0 ] && [ -n "$before" ] && [ "$before" = "$(item_state "$key")" ]; then
+  usage=$(run_usage "$agent" "$out"); [ -n "$usage" ] || usage='{}'
+  # Clean exits that still count as failures:
+  # - no tool calls on an issue or PR: the agent can't have checked or changed anything (a made-up answer,
+  #   or a tool call written as text);
+  # - nothing changed on its issue or PR: no label, commit, comment or PR.
+  if [ "$rc" -eq 0 ] && [[ $key =~ ^(pr|issue)-[0-9]+$ ]] && [ "$(jq -r '.tools // 1' <<<"$usage")" = 0 ]; then
+    rc=4
+    log "no tool calls: $agent on $key"
+  elif [ "$rc" -eq 0 ] && [ -n "$before" ] && [ "$before" = "$(item_state "$key")" ]; then
     rc=3
     log "no progress: $agent left $key unchanged"
   fi
-  usage=$(run_usage "$agent" "$out"); [ -n "$usage" ] || usage='{}'
   log "done $agent $key exit=$rc secs=$secs $(jq -r '"model=\(.model // "?") in=\(.input // "?") out=\(.output // "?")"' <<<"$usage")"
   jq -c --arg t "$(now)" --arg a "$agent" --arg k "$key" --arg r "${RUNTIME[$agent]}" --argjson rc "$rc" --argjson s "$secs" \
     '{time: $t, agent: $a, runtime: $r, key: $k, exit: $rc, secs: $s} + .' <<<"$usage" >> "$STATE/runs.jsonl"
@@ -149,7 +157,22 @@ model_of() {
     openclaw) m=$(cd "$STATE" && openclaw config get "agents.entries.$1.model.primary" 2>/dev/null | tail -1) ;;
     hermes) m=$(hermes -p "$1" config get model.default 2>/dev/null) ;;
   esac
-  echo "${m#ollama-cloud/}" | sed 's#^google/##'
+  short_model "$m"
+}
+
+# short_model <ref>: the model name without its provider: ollama-cloud/gpt-oss:120b -> gpt-oss:120b.
+short_model() { echo "$1" | sed -E 's#^(ollama-cloud|google|gemini)/##'; }
+
+# backup_of <agent>: the agent's first fallback model, in the form run_agent takes.
+backup_of() {
+  case ${RUNTIME[$1]} in
+    openclaw) (cd "$STATE" && openclaw config get "agents.entries.$1.model.fallbacks" 2>/dev/null) \
+                | sed -n '/^\[/,/^\]/p' | jq -r '.[0] // empty' ;;
+    hermes) local p m
+            p=$(hermes -p "$1" config get fallback_providers.0.provider 2>/dev/null) || true
+            m=$(hermes -p "$1" config get fallback_providers.0.model 2>/dev/null) || true
+            [ -z "$p" ] || [ -z "$m" ] || echo "$p $m" ;;
+  esac
 }
 
 # item_state <key>: what a useful run on pr-N or issue-N changes, as one line. Empty for other keys.
@@ -166,16 +189,22 @@ item_state() {
   esac
 }
 
-# run_agent <agent> <session> <message file>: one headless run, output to stdout.
+# run_agent <agent> <session> <message file> [backup model]: one headless run, output to stdout.
+# A backup model replaces the agent's own for this run: "provider/model" (OpenClaw) or "provider model" (Hermes).
 run_agent() {
-  local agent=$1 session=$2 msg=$3
+  local agent=$1 session=$2 msg=$3 backup=${4:-}
+  local pick=()
+  case ${RUNTIME[$agent]} in
+    openclaw) [ -z "$backup" ] || pick=(--model "$backup") ;;
+    hermes) [ -z "$backup" ] || pick=(--provider "${backup%% *}" -m "${backup##* }") ;;
+  esac
   case ${RUNTIME[$agent]} in
     openclaw)
       # Started from the state folder: OpenClaw reads a .env from its working folder, and a clone could hold one.
       # Its tools run in the agent's clone (cwd in its config).
       ( cd "$STATE" &&
         timeout -k 60 "$RUN_TIMEOUT" openclaw agent --local --agent "$agent" --session-key "$session" \
-          --message-file "$msg" --timeout $(( RUN_TIMEOUT - 60 )) --json ) ;;
+          --message-file "$msg" --timeout $(( RUN_TIMEOUT - 60 )) "${pick[@]}" --json ) ;;
     hermes)
       # Hermes clones stay on main: Hermes reads instruction files (AGENTS.md, HERMES.md) from the working tree,
       # so it must never run inside a PR branch.
@@ -184,20 +213,23 @@ run_agent() {
       git -C "$repo" checkout -q -f main && git -C "$repo" reset -q --hard origin/main && git -C "$repo" clean -fdq
       ( cd "$repo" &&
         timeout -k 60 "$RUN_TIMEOUT" hermes -p "$agent" chat --oneshot -Q --run-budget $(( RUN_TIMEOUT - 60 )) \
-          --query-file "$msg" --format stream-json ) ;;
+          "${pick[@]}" --query-file "$msg" --format stream-json ) ;;
   esac
 }
 
-# run_usage <agent> <output file>: {provider, model, input, output, fallbacks} as JSON, {} if unreadable.
+# run_usage <agent> <output file>: {provider, model, input, output, fallbacks, tools} as JSON, {} if unreadable.
+# tools = number of tool calls that ran (OpenClaw: distinct tools used; Hermes: tool calls).
 # Hermes reports only the requested model; a fallback shows up in its text output, not here.
 run_usage() {
   case ${RUNTIME[$1]} in
     openclaw) sed -n '/^{/,$p' "$2" | jq -c '.meta.agentMeta // {} | {provider, model,
-                input: .usage.input, output: .usage.output, fallbacks: (.fallbackAttempts // [] | length)}' ;;
+                input: .usage.input, output: .usage.output, fallbacks: (.fallbackAttempts // [] | length),
+                tools: (.terminalReceipt.successfulToolNames // [] | map(select(. != "tool_search")) | length)}' ;;
     hermes) jq -cRn '[inputs | fromjson? // empty] as $l
               | ($l | map(select(.type == "system")) | first // {}) as $init
               | ($l | map(select(.type == "result")) | last // {}) as $r
-              | {model: $init.model, input: $r.tokens.input, output: $r.tokens.output}' "$2" ;;
+              | {model: $init.model, input: $r.tokens.input, output: $r.tokens.output,
+                 tools: ($l | map(select(.type == "tool_use")) | length)}' "$2" ;;
   esac 2>/dev/null || echo '{}'
 }
 
