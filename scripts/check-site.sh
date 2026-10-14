@@ -18,7 +18,16 @@ url="$1"
 
 # Use curl to fetch the HTTP status code silently.
 # -s: silent, -o /dev/null: discard body, -w "%{http_code}" prints the code.
-status=$(curl -s -o /dev/null -w "%{http_code}" "$url" || echo "curl_error")
+# NOTE: When curl cannot connect, it exits with a non‑zero status and may still
+# output "000" as the HTTP code. The original implementation relied on the
+# "|| echo curl_error" fallback, which would miss the non‑zero exit and treat
+# "000" as a valid response. We now capture the exit code explicitly and set
+# a distinct "curl_error" marker when the request fails.
+status=$(curl -s -o /dev/null -w "%{http_code}" "$url")
+curl_exit=$?
+if [ $curl_exit -ne 0 ]; then
+  status="curl_error"
+fi
 
 if [[ "$status" == "200" ]]; then
   # Success – nothing to output.
