@@ -6,40 +6,58 @@ For humans, this is also the design of the team.
 ## Life of a ticket
 
 All work starts as a ticket: a GitHub issue. A ticket ends as a merged PR, or closed with a reason.
-Each box is one step, top to bottom. ✓ moves the ticket to the next box; ✗ sends the PR back to step 3.
+Read it top to bottom. Solid arrows move the ticket forward; dashed arrows loop back to an earlier step.
 
 ```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
+%%{init: {"flowchart": {"wrappingWidth": 440}}}%%
 flowchart TD
-  S1["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you or an agent"]
-  S2["<b>2 · Triaged</b> · orchestrator<br/>✓ adds Goal, Acceptance, Needs → label assign:builder-*<br/>too big → split into new tickets · duplicate → closed"]
-  S3["<b>3 · Built</b> · builder<br/>✓ opens a PR that says Closes #N → label needs-test<br/>sent back 3 times → label needs-human, waits for you"]
-  S4["<b>4 · CI</b> · GitHub Actions<br/>✓ pytest passes<br/>✗ red → back to step 3"]
-  S5["<b>5 · Tested</b> · tester<br/>✓ works on test data → status test/passed, label needs-review<br/>✗ fails → back to step 3, with a Lesson line<br/>a problem outside this PR → files a new bug ticket"]
-  S6["<b>6 · Reviewed</b> · reviewer<br/>✓ does what the ticket asks → status review/approved<br/>✗ doesn't → back to step 3, with a Lesson line"]
-  S7["<b>7 · Merged</b> · you<br/>label ready-to-merge → you merge<br/>the ticket closes"]
+  T["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you or an agent"]
+  O{{"<b>2 · Triage</b> · orchestrator<br/>one PR's worth of work?"}}
+  X(["Closed with a reason"])
+  B["<b>3 · Build</b> · builder<br/>opens a PR: Closes #N<br/>label needs-test"]
+  H(["Waits for you<br/>label needs-human"])
+  C{{"<b>4 · CI</b><br/>pytest green?"}}
+  TE{{"<b>5 · Test</b> · tester<br/>works on test data?"}}
+  R{{"<b>6 · Review</b> · reviewer<br/>does what the ticket asks?"}}
+  M["<b>7 · Merged</b> · you<br/>the ticket closes"]
 
-  S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7
+  T --> O
+  O -->|"yes · assigned"| B
+  O -->|"duplicate"| X
+  O -.->|"too big: split"| T
+  B --> C
+  B -->|"sent back 3×"| H
+  C -->|"yes"| TE
+  C -.->|"no"| B
+  TE -->|"yes · test/passed"| R
+  TE -.->|"no + Lesson"| B
+  TE -.->|"other bug: new ticket"| T
+  R -->|"yes · review/approved"| M
+  R -.->|"no + Lesson"| B
 
   classDef ticket fill:#24292f,stroke:#24292f,color:#fff
   classDef step fill:#eef2ff,stroke:#6366f1,color:#000
+  classDef check fill:#fff,stroke:#6366f1,color:#000
   classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
-  class S1 ticket
-  class S2,S3,S4,S5,S6 step
-  class S7 done
+  classDef side fill:#fff3cd,stroke:#b58105,color:#000
+  class T ticket
+  class B step
+  class O,C,TE,R check
+  class M done
+  class X,H side
 ```
 
 1. **GitHub ticket.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
    `change-request`. The tester files `bug` tickets. Any agent may file `tech-debt`. Only the orchestrator assigns.
-2. **Triaged** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
+2. **Triage** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
    ones not worth doing, with a reason. Every ticket gets Goal, Acceptance, Needs and Files likely touched.
    It adds `assign:<builder>` once the ticket's Needs are merged and that builder is free.
-3. **Built** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
+3. **Build** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
    then a PR that starts `Closes #<issue>`, labelled `needs-test`.
 4. **CI** runs pytest on the PR. If it's red, the dispatcher sends the PR back with no model call.
-5. **Tested** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
+5. **Test** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
    Fail: label `changes-requested`, with evidence and a `Lesson:` line.
-6. **Reviewed** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
+6. **Review** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
    Reject: label `changes-requested`, with the reason and a `Lesson:` line.
 7. **Merged** by the human. The PR closes the ticket; the orchestrator sees the change and assigns the next ticket.
 
