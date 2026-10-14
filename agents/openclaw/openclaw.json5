@@ -1,0 +1,80 @@
+// OpenClaw config for the three OpenClaw agents (builder-ingest, builder-web, tester).
+// agents/setup.sh copies it to ~agents/.openclaw/openclaw.json. Keys come from the environment (agents/env.sh).
+// Model choices and reasons: agents/WORKFLOW.md (Team).
+{
+  models: {
+    mode: "merge",
+    providers: {
+      // Ollama Cloud, free plan. Only free models are listed: one paid model's 402 locks this key for all agents.
+      "ollama-cloud": {
+        api: "ollama",
+        baseUrl: "https://ollama.com",
+        apiKey: { source: "env", provider: "default", id: "OLLAMA_API_KEY" },
+        models: [
+          { id: "gpt-oss:120b", name: "gpt-oss:120b", contextWindow: 131072, maxTokens: 32768, reasoning: true },
+          { id: "gemma4:31b", name: "gemma4:31b", contextWindow: 131072, maxTokens: 32768, reasoning: true },
+        ],
+      },
+      // google (GEMINI_API_KEY) and openrouter (OPENROUTER_API_KEY) are built in.
+    },
+  },
+
+  agents: {
+    ownership: "explicit",
+    defaults: {
+      skipBootstrap: true,      // the workspaces are pre-filled by agents/sync-prompts.sh
+      timeoutSeconds: 600,
+    },
+    entries: {
+      "builder-ingest": {
+        name: "builder-ingest",
+        identity: { name: "builder-ingest" },
+        workspace: "/home/agents/work/builder-ingest",        // prompt files (AGENTS.md, SOUL.md, IDENTITY.md)
+        cwd: "/home/agents/work/builder-ingest/repo",          // where its commands run: its own clone
+        model: {
+          primary: "ollama-cloud/gpt-oss:120b",
+          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+        },
+        tools: { exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },   // allowlist: exec-allowlist.txt
+      },
+      "builder-web": {
+        name: "builder-web",
+        identity: { name: "builder-web" },
+        workspace: "/home/agents/work/builder-web",
+        cwd: "/home/agents/work/builder-web/repo",
+        model: {
+          primary: "ollama-cloud/gpt-oss:120b",
+          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+        },
+        tools: { exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
+      },
+      "tester": {
+        name: "tester",
+        identity: { name: "tester" },
+        workspace: "/home/agents/work/tester",
+        cwd: "/home/agents/work/tester/repo",
+        model: {
+          primary: "ollama-cloud/gemma4:31b",
+          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+        },
+        tools: { exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
+      },
+    },
+  },
+
+  // Traces to Langfuse (model, tokens, timing per call), next to the Hermes agents' traces.
+  plugins: { entries: { "diagnostics-otel": { enabled: true } } },
+  diagnostics: {
+    enabled: true,
+    otel: {
+      enabled: true,
+      protocol: "http/protobuf",
+      serviceName: "openclaw",
+      tracesEndpoint: "${LANGFUSE_HOST}/api/public/otel/v1/traces",
+      headers: { Authorization: "Basic ${LANGFUSE_BASIC_AUTH}", "x-langfuse-ingestion-version": "4" },
+      traces: true,
+      metrics: false,
+      logs: false,
+    },
+  },
+}

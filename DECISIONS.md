@@ -3,6 +3,17 @@
 Choices made while setting up the project, with the reason and how to change each one.
 Newest section first.
 
+## Agents: models and workflow (2026-10-14)
+
+| # | Decision | Why | To change |
+|---|---|---|---|
+| 10 | **Only free models: Ollama Cloud's free models, plus the Gemini API free tier for the reviewer.** The planned GLM, DeepSeek and Kimi models were dropped | All of them returned HTTP 402 on Ollama's free plan. Free there: `gpt-oss`, `nemotron-3`, `gemma4`. One 402 locks OpenClaw's Ollama key for ~10 minutes for every agent, so no paid model is configured even as a fallback | `agents/openclaw/openclaw.json5`, `agents/hermes/*.json`, then re-run `agents/setup.sh` |
+| 11 | **The reviewer runs on `gemini-2.5-flash` (Google), with Google-only fallbacks** | It must not share a model family with the builders (`gpt-oss`, OpenAI) or the orchestrator (`nemotron`, NVIDIA). It does one run per PR, which fits Gemini's free limit of 5 requests a minute | `agents/hermes/reviewer.json` |
+| 12 | **No Gemini 3.x Flash models.** Their free tier allows 20 requests a day | They also returned 503 "high demand" for hours, and failed calls count against the 20. One agent run takes 3–12 requests | Add one as a fallback in `agents/hermes/*.json` |
+| 13 | **Groq is not configured for any agent** | Its free tier allows 8,000 tokens a minute, and one agent request is 12,000–28,000 tokens. Left for the app's own summaries | |
+| 14 | **The prompts are copied into each runtime before every run** (`agents/sync-prompts.sh`), not symlinked | OpenClaw refuses symlinked prompt files. Copying from the `main` checkout means a prompt changes only through a merged PR | |
+| 15 | **The tester runs on `gemma4:31b`, not `nemotron-3-super`** | In the smoke test (one read-only task per agent), `nemotron-3-super` ran no command and made up its answer: a commit, a PR and 17 issues that don't exist. `gemma4:31b` and `nemotron-3-ultra` both ran the commands and answered correctly; `gemma4:31b` used half the tokens. The tester and reviewer now share a family (Google), but neither shares the builders' | `agents/openclaw/openclaw.json5` |
+
 ## Infra: move to AWS (2026-10-14)
 
 | # | Decision | Why | To change |

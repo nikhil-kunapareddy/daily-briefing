@@ -1,0 +1,10 @@
+{
+  "model.provider": "gemini",
+  "model.default": "gemini-2.5-flash",
+  "fallback_providers": [
+    { "provider": "gemini", "model": "gemini-3.5-flash-lite" },
+    { "provider": "ollama-cloud", "model": "gemma4:31b" }
+  ],
+  "agent.max_turns": 40,
+  "terminal.cwd": "/home/agents/work/reviewer/repo"
+}

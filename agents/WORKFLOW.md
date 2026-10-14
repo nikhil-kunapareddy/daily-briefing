@@ -1,0 +1,142 @@
+# Workflow
+
+How work moves between the agents. Every agent follows these rules.
+For humans, this is also the design of the team.
+
+## Team
+
+| Agent | Runtime | Model (family) | Job |
+|---|---|---|---|
+| orchestrator | Hermes | `nemotron-3-ultra` (NVIDIA) | Splits `SPEC.md` into issues, assigns them, triages bugs, re-queues stuck work, curates `LESSONS.md` |
+| builder-ingest | OpenClaw | `gpt-oss:120b` (OpenAI) | Data side: schema, fetching, finding new items, schedule, install script |
+| builder-web | OpenClaw | `gpt-oss:120b` (OpenAI) | Web side: public page, Run now, rate limit, health endpoint |
+| tester | OpenClaw | `gemma4:31b` (Google) | Tests each PR branch. Passes it on, or sends it back with evidence. Files bugs |
+| reviewer | Hermes | `gemini-2.5-flash` (Google) | Reads each tested PR against its issue and `SPEC.md`. Approves, or sends it back with a reason |
+| debt-lead | Hermes | `gemma4:31b` (Google) | Tech-debt sweep: files at most 5 issues, each with evidence |
+
+All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer.
+Neither check on a PR uses the builders' model family (OpenAI): the tester runs the code, the reviewer (Google) reads it.
+The reviewer also differs from the orchestrator (NVIDIA), so it doesn't share the orchestrator's reading of the spec.
+
+Fallbacks, used when a model is rate-limited or down:
+- **Builders and tester:** `gemini-2.5-flash`, then `nemotron-3-ultra` (free) on OpenRouter.
+- **Orchestrator:** `nemotron-3-ultra` on OpenRouter, then `gemini-2.5-flash`.
+- **Reviewer:** `gemini-3.5-flash-lite`, then `gemma4:31b` on Ollama. All three are Google models, so a fallback
+  never reviews with the builders' model family.
+- **Debt-lead:** `gpt-oss:120b`, then `gemini-3.5-flash-lite`.
+
+The dispatcher logs the model and token counts of every run (`runs.jsonl` on the VM).
+
+## Ticket flow
+
+```mermaid
+flowchart TD
+  H([Human]) -->|"SPEC.md + plan issue"| O[orchestrator]
+  O -->|"issue + assign:builder-*"| B[builder-ingest / builder-web]
+  B -->|"own pytest passes: PR + needs-test"| CI{{"CI: pytest"}}
+  CI -->|red| B
+  CI -->|green| T[tester]
+  T -->|"fail: changes-requested + Lesson"| B
+  T -->|"pass: test/passed + needs-review"| R[reviewer]
+  R -->|"reject: changes-requested + Lesson"| B
+  R -->|"approve: review/approved + ready-to-merge"| M([Human merges])
+  M -->|"issue closes; board changed"| O
+  T -->|"problem outside this PR: bug issue"| O
+```
+
+Cheap checks run first, so the strong reviewer model only sees code that already works.
+The step from a red CI back to the builder is done by the dispatcher, with no model call.
+
+## Labels
+
+**Issues**
+
+| Label | Meaning | Set by |
+|---|---|---|
+| `assign:<agent>` | This agent owns the issue | Orchestrator only |
+| `bug`, `incident`, `tech-debt`, `change-request` | Kind of issue | Whoever files it |
+| `needs-human` | Stuck. Waits for the human | Any agent, or the dispatcher |
+
+**Pull requests.** A PR has exactly one of the first four at a time. Whoever adds one removes the previous one.
+
+| Label | Meaning | Set by |
+|---|---|---|
+| `needs-test` | Waiting for the tester | Builder, when opening the PR or after a fix |
+| `needs-review` | Tested. Waiting for the reviewer | Tester |
+| `changes-requested` | Sent back to the builder | Tester, reviewer, or the dispatcher (red CI) |
+| `ready-to-merge` | Approved. Waiting for the human | Reviewer |
+| `needs-human` | Sent back too often, or an agent is stuck | Any agent, or the dispatcher |
+| `lessons` | Orchestrator's `LESSONS.md` update. Skips the tester and reviewer; the human reviews it | Orchestrator |
+
+**Triggers:** `debt-sweep` on an issue wakes the debt-lead (added by the human or a weekly cron).
+
+## Conventions
+
+- **Branch:** `<agent>/<issue>-<short-name>`, for example `builder-ingest/3-new-items`. The dispatcher finds a PR's builder from this prefix.
+- **PR body:** first line `Closes #<issue>`. Then what changed, and how you tested it (paste pytest's summary line).
+- **Commits:** author name is your agent name. End each message with the trailer `Agent: <your name>`.
+- **Commit statuses** on the PR's latest commit: `test/passed` (tester) and `review/approved` (reviewer).
+  A new push clears both, so every fix is tested and reviewed again. `main` only accepts a PR with both, plus green CI, merged by the human.
+  A tester's own PR can't be tested by the tester: the dispatcher sets its `test/passed` to "not self-tested" and sends it to the reviewer.
+  A `lessons` PR only changes `agents/LESSONS.md`; the human reviews and merges it without the agent gates.
+- **Issues from the orchestrator** have four parts: Goal, Acceptance (checkable bullets), Needs (`#n` or none), Files likely touched.
+
+## Rules
+
+1. **GitHub is the only channel.** Agents never call each other. Everything is an issue, a PR, a label, a comment or a status.
+2. **Only the orchestrator assigns issues.** Other agents may file issues, but leave them unassigned.
+3. **Nobody checks their own work.** Builders never test, review or merge their own PRs. The tester and reviewer never change `app/`.
+   The tester may write tests and fixtures in its own PRs; those skip the tester step and go straight to review.
+4. **Every send-back ends with one line:** `Lesson: <one general rule>`, for example `Lesson: compare stable arXiv IDs, never titles.`
+5. **A PR can be sent back twice.** The third time, it gets `needs-human` and waits for the human.
+6. **One open ticket per builder.** The orchestrator assigns a builder's next issue only after its previous PR is merged or closed,
+   and never gives both builders issues that touch the same file at the same time.
+7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/` or `agents/` (the orchestrator's `LESSONS.md` PR is the one exception).
+   Never touch the live data in `/var/lib/daily-briefing/` or the live app on port 8000. Test servers use port 8100 or above.
+8. **Keys stay secret.** Never print, paste or commit a key or token.
+9. **Stuck or unsure:** comment on the issue or PR with what you tried and what you need, then add `needs-human`. Don't guess.
+
+## Who wakes when
+
+`ops/dispatcher.sh` runs every 5 minutes with no model. It wakes at most one agent per run, under a lock,
+and caps each run at 20 minutes. It checks from the end of the pipeline backward, so finished work moves first:
+
+1. **reviewer:** the oldest PR with `needs-review`.
+2. **tester:** the oldest PR with `needs-test` whose CI is green. Red CI: the dispatcher sends the PR back. Still running: wait.
+3. **builder:** its oldest PR with `changes-requested`, otherwise its oldest `assign:<builder>` issue that has no open PR.
+   The tester is woken the same way for its own test-writing issues.
+4. **debt-lead:** an open issue with `debt-sweep`.
+5. **orchestrator:** an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
+   (a new or relabelled issue, a merged or closed PR).
+
+Anything with `needs-human` is skipped. When nothing is waiting, no agent runs and no tokens are spent.
+The wake-up message names the issue or PR. The agent reads the details itself with `gh`.
+**The dispatcher counts send-backs** (rule 5): when a PR gets `changes-requested` for the third time, it swaps the label for `needs-human`.
+
+## Commands
+
+The repo is `nikhil-kunapareddy/daily-briefing`. `gh` is already signed in.
+
+| To | Run |
+|---|---|
+| Read an issue or PR with its comments | `gh issue view N --comments` · `gh pr view N --comments` |
+| See a PR's changes | `gh pr diff N` |
+| Check out a PR | `gh pr checkout N` |
+| Latest commit of a PR | `gh pr view N --json headRefOid -q .headRefOid` |
+| Swap a label | `gh pr edit N --add-label needs-review --remove-label needs-test` |
+| Post a status | `gh api repos/nikhil-kunapareddy/daily-briefing/statuses/SHA -f state=success -f context=test/passed -f description="…"` (`state=failure` to fail) |
+| Comment (use a file for anything longer than a line) | `gh pr comment N --body-file note.md` · `gh issue comment N --body-file note.md` |
+| Open a PR | `gh pr create --base main --title "…" --body-file pr.md --label needs-test` |
+| File an issue | `gh issue create --title "…" --body-file issue.md --label bug` |
+| Commit | `git commit -m "…" --trailer "Agent: <your name>"` |
+
+## LESSONS.md
+
+What the team has learned from rejections, so the same mistake isn't made twice.
+
+1. The tester and reviewer end every send-back with a `Lesson:` line (rule 4).
+2. Once a day, a script collects the `Lesson:` lines from the last 24 hours.
+3. The orchestrator merges them into `agents/LESSONS.md`: no duplicates, at most 20 lines, each with a link to its PR.
+   It opens a PR labelled `lessons`.
+4. The human merges it. No lesson reaches the agents without review.
+5. The dispatcher puts `LESSONS.md` into every builder's wake-up message.

@@ -1,0 +1,12 @@
+{
+  "model.provider": "ollama-cloud",
+  "model.default": "gemma4:31b",
+  "fallback_providers": [
+    { "provider": "ollama-cloud", "model": "gpt-oss:120b" },
+    { "provider": "gemini", "model": "gemini-3.5-flash-lite" }
+  ],
+  "agent.max_turns": 80,
+  "platform_toolsets.cli": ["terminal", "file", "todo", "delegation"],
+  "delegation.oneshot_max_children": 5,
+  "terminal.cwd": "/home/agents/work/debt-lead/repo"
+}

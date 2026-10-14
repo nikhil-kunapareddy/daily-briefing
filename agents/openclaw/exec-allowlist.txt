@@ -1,0 +1,59 @@
+# Programs the OpenClaw agents (builder-ingest, builder-web, tester) may run. One path or glob per line.
+# agents/setup.sh applies it with `openclaw approvals set`; anything else is denied at once.
+# A command line is denied if any program in it is missing here, so pipes need every part listed.
+# Shell builtins (cd, echo, test, kill, printf) need no entry.
+
+# code and GitHub
+/usr/bin/git
+/usr/bin/gh
+
+# Python, including the agent's own clone's virtualenv (python, pip, pytest). AGENT becomes the agent's name.
+/usr/bin/python3
+/usr/bin/python3.12
+/home/agents/work/AGENT/repo/.venv/bin/*
+
+# shells, for scripts/install.sh and test scripts
+/usr/bin/bash
+/usr/bin/sh
+/usr/bin/dash
+
+# reading and editing files
+/usr/bin/ls
+/usr/bin/cat
+/usr/bin/head
+/usr/bin/tail
+/usr/bin/grep
+/usr/bin/sed
+/usr/bin/gawk
+/usr/bin/find
+/usr/bin/wc
+/usr/bin/sort
+/usr/bin/uniq
+/usr/bin/diff
+/usr/bin/cut
+/usr/bin/tr
+/usr/bin/tee
+/usr/bin/xargs
+/usr/bin/mkdir
+/usr/bin/touch
+/usr/bin/cp
+/usr/bin/mv
+/usr/bin/rm
+/usr/bin/chmod
+/usr/bin/stat
+/usr/bin/realpath
+/usr/bin/basename
+/usr/bin/dirname
+/usr/bin/env
+/usr/bin/date
+
+# test servers on 127.0.0.1:8100+ and their data (WORKFLOW.md rule 9)
+/usr/bin/curl
+/usr/bin/jq
+/usr/bin/sqlite3
+/usr/bin/timeout
+/usr/bin/sleep
+/usr/bin/ps
+/usr/bin/pgrep
+/usr/bin/pkill
+/usr/bin/ss

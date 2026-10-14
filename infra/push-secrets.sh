@@ -6,6 +6,7 @@
 #   agents.env -> /home/agents/.env      app.env -> /home/app/.env      root.env -> /root/root.env
 # Then: points DuckDNS at the VM, and stores the GitHub token in gh's login for the agents user
 # (Hermes strips GH_TOKEN from agent tools, so a stored login is what reaches them).
+# Last: updates the VM's checkout and runs ops/setup-vm.sh (cron jobs, agent runtimes and profiles).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -42,4 +43,7 @@ printf %s "$token" | env -u GH_TOKEN gh auth login --with-token
 env -u GH_TOKEN gh auth setup-git
 env -u GH_TOKEN gh api user --jq '"  signed in as \(.login)"'
 EOF
+
+echo "== VM setup"
+ssh_vm 'sudo -u app git -C /srv/daily-briefing pull -q --ff-only && sudo bash /srv/daily-briefing/ops/setup-vm.sh'
 echo "== done"

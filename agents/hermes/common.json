@@ -1,0 +1,9 @@
+{
+  "agent.max_turns": 60,
+  "agent.api_max_retries": 1,
+  "agent.auto_recovery_cycles": 0,
+  "auxiliary.title_generation.enabled": false,
+  "terminal.backend": "local",
+  "terminal.timeout": 180,
+  "platform_toolsets.cli": ["terminal", "file", "todo"]
+}
