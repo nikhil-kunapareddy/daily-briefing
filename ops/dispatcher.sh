@@ -5,7 +5,7 @@
 #
 #   ops/dispatcher.sh            normal run
 #   DRY_RUN=1 ops/dispatcher.sh  print what would happen, change nothing
-#   touch ~/work/.dispatcher/PAUSE   stop all wake-ups until the file is removed
+#   touch ~/work/.dispatcher/PAUSE   stop all wake-ups until the file is removed (dry runs still work)
 set -euo pipefail
 
 REPO=nikhil-kunapareddy/daily-briefing
@@ -25,7 +25,7 @@ declare -A RUNTIME=(
 mkdir -p "$STATE/runs" "$STATE/fails"
 exec 9>"$STATE/lock"
 flock -n 9 || exit 0                           # an agent is still running
-[ -e "$STATE/PAUSE" ] && exit 0
+[ -e "$STATE/PAUSE" ] && [ "$DRY_RUN" != 1 ] && exit 0   # a dry run still shows what would happen
 
 now() { date -u +%FT%TZ; }
 log() { echo "$(now) $*" >> "$STATE/dispatch.log"; [ "$DRY_RUN" = 1 ] && echo "$*" || true; }
