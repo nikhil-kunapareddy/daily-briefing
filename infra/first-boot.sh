@@ -16,6 +16,8 @@ set -euxo pipefail
 # shellcheck source=/dev/null
 . /opt/first-boot/config.env
 export DEBIAN_FRONTEND=noninteractive
+# Ubuntu's own unattended-upgrades may hold the apt lock on first boot. Wait for it instead of failing.
+echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/90lock-timeout
 
 timedatectl set-timezone Etc/UTC
 
@@ -27,18 +29,6 @@ id app >/dev/null 2>&1 || useradd --create-home --shell /bin/bash app
 install -d -o app -g app -m 0755 /srv/daily-briefing
 install -d -o app -g app -m 0750 /var/lib/daily-briefing
 install -d -o agents -g agents -m 0750 /home/agents/work
-
-# ---------------------------------------------------------------- VM firewall
-# Oracle's Ubuntu image ends INPUT with a REJECT rule. Insert 80/443 above it.
-
-for port in 80 443; do
-  if ! iptables -C INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; then
-    reject_line=$(iptables -L INPUT --line-numbers | awk '$2 == "REJECT" {print $1; exit}')
-    iptables -I INPUT "${reject_line:-1}" -p tcp --dport "$port" -m state --state NEW -j ACCEPT
-  fi
-done
-command -v netfilter-persistent >/dev/null || apt-get install -y iptables-persistent
-netfilter-persistent save
 
 # ---------------------------------------------------------------- apt repos: Node, gh, Caddy
 

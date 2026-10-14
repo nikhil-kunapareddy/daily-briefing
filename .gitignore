@@ -11,7 +11,7 @@ secrets/
 *.tfvars
 !*.tfvars.example
 crash.log
-apply-retry.log
+tfplan
 
 # Python
 __pycache__/

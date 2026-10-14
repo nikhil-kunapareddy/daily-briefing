@@ -2,15 +2,19 @@ terraform {
   required_version = ">= 1.6"
 
   required_providers {
-    oci = {
-      source  = "oracle/oci"
-      version = "~> 9.9"
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
     }
   }
 }
 
-# Signs in with ~/.oci/config (profile DEFAULT): user, tenancy, fingerprint, key file.
-provider "oci" {
-  region              = var.region
-  config_file_profile = "DEFAULT"
+# Signs in with a named profile in ~/.aws/credentials (an IAM user with AmazonEC2FullAccess).
+provider "aws" {
+  region  = var.region
+  profile = var.aws_profile
+
+  default_tags {
+    tags = { Project = "daily-briefing" }
+  }
 }

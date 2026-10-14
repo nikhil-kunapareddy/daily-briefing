@@ -1,18 +1,25 @@
-variable "tenancy_ocid" {
-  description = "Tenancy OCID, from ~/.oci/config. Always Free resources live in the tenancy's home region."
-  type        = string
-}
-
-variable "compartment_ocid" {
-  description = "Compartment for all resources. Defaults to the tenancy root."
-  type        = string
-  default     = null
-}
-
 variable "region" {
-  description = "Home region. Always Free A1 capacity exists only here."
+  description = "AWS region. Any region that offers the instance type works."
   type        = string
-  default     = "us-sanjose-1"
+  default     = "us-east-1"
+}
+
+variable "aws_profile" {
+  description = "AWS CLI profile Terraform signs in with (~/.aws/credentials)."
+  type        = string
+  default     = "confer"
+}
+
+# m7i-flex.large (2 vCPU / 8 GB, x86) is on the AWS Free plan's instance list and is the size the brief names
+# for plan B. About $2.50/day of credits with the public IP and disk. t3.small (2 GB) makes credits last ~4x longer.
+variable "instance_type" {
+  type    = string
+  default = "m7i-flex.large"
+}
+
+variable "root_volume_gbs" {
+  type    = number
+  default = 30
 }
 
 variable "ssh_public_key_path" {
@@ -25,24 +32,6 @@ variable "ssh_allowed_cidr" {
   description = "Who may reach port 22. Key-only login either way; narrow to your IP/32 if it is stable."
   type        = string
   default     = "0.0.0.0/0"
-}
-
-# Always Free allows up to 4 OCPU / 24 GB of A1 in total. 1 / 6 because the smaller shape
-# finds capacity more often, and nothing heavy runs on the VM (models are remote, one agent at a time).
-variable "instance_ocpus" {
-  type    = number
-  default = 1
-}
-
-variable "instance_memory_gbs" {
-  type    = number
-  default = 6
-}
-
-variable "boot_volume_gbs" {
-  description = "Always Free includes 200 GB of block storage in total."
-  type        = number
-  default     = 50
 }
 
 variable "repo_url" {

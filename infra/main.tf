@@ -1,155 +1,161 @@
 locals {
-  compartment_id = coalesce(var.compartment_ocid, var.tenancy_ocid)
-  name           = "daily-briefing"
+  name = "daily-briefing"
+  # Ubuntu's image names say amd64 or arm64. Pick the one the instance type runs.
+  arch = contains(data.aws_ec2_instance_type.vm.supported_architectures, "arm64") ? "arm64" : "amd64"
 }
 
 # ---------------------------------------------------------------- lookups
 
-data "oci_identity_availability_domains" "ads" {
-  compartment_id = var.tenancy_ocid
+data "aws_ec2_instance_type" "vm" {
+  instance_type = var.instance_type
 }
 
-# Newest standard (not Minimal) Ubuntu 24.04 build for Arm.
-data "oci_core_images" "ubuntu" {
-  compartment_id           = local.compartment_id
-  operating_system         = "Canonical Ubuntu"
-  operating_system_version = "24.04"
-  shape                    = "VM.Standard.A1.Flex"
-  sort_by                  = "TIMECREATED"
-  sort_order               = "DESC"
+# Not every zone offers every instance type.
+data "aws_ec2_instance_type_offerings" "vm" {
+  location_type = "availability-zone"
 
   filter {
-    name   = "display_name"
-    values = ["^Canonical-Ubuntu-24\\.04-aarch64-.*"]
-    regex  = true
+    name   = "instance-type"
+    values = [var.instance_type]
+  }
+}
+
+# Newest Ubuntu 24.04 server image from Canonical.
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-${local.arch}-server-*"]
   }
 }
 
 # ---------------------------------------------------------------- network
 
-resource "oci_core_vcn" "main" {
-  compartment_id = local.compartment_id
-  display_name   = "${local.name}-vcn"
-  cidr_blocks    = ["10.0.0.0/16"]
-  dns_label      = "briefing"
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  tags                 = { Name = "${local.name}-vpc" }
 }
 
-resource "oci_core_internet_gateway" "main" {
-  compartment_id = local.compartment_id
-  vcn_id         = oci_core_vcn.main.id
-  display_name   = "${local.name}-igw"
-  enabled        = true
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "${local.name}-igw" }
 }
 
-resource "oci_core_route_table" "public" {
-  compartment_id = local.compartment_id
-  vcn_id         = oci_core_vcn.main.id
-  display_name   = "${local.name}-public-rt"
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = sort(data.aws_ec2_instance_type_offerings.vm.locations)[0]
+  map_public_ip_on_launch = true
+  tags                    = { Name = "${local.name}-public" }
 
-  route_rules {
-    destination       = "0.0.0.0/0"
-    destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_internet_gateway.main.id
-  }
-}
-
-# Cloud firewall. The VM's own iptables also blocks 80/443 until first-boot.sh opens them.
-resource "oci_core_security_list" "public" {
-  compartment_id = local.compartment_id
-  vcn_id         = oci_core_vcn.main.id
-  display_name   = "${local.name}-public-sl"
-
-  egress_security_rules {
-    destination = "0.0.0.0/0"
-    protocol    = "all"
-  }
-
-  ingress_security_rules {
-    description = "SSH"
-    source      = var.ssh_allowed_cidr
-    protocol    = "6"
-    tcp_options {
-      min = 22
-      max = 22
-    }
-  }
-
-  dynamic "ingress_security_rules" {
-    for_each = { http = 80, https = 443 }
-    content {
-      description = upper(ingress_security_rules.key)
-      source      = "0.0.0.0/0"
-      protocol    = "6"
-      tcp_options {
-        min = ingress_security_rules.value
-        max = ingress_security_rules.value
-      }
-    }
-  }
-
-  # Path MTU discovery.
-  ingress_security_rules {
-    source   = "0.0.0.0/0"
-    protocol = "1"
-    icmp_options {
-      type = 3
-      code = 4
-    }
+  # The zone list can change later. That must not move the subnet, and the VM with it.
+  lifecycle {
+    ignore_changes = [availability_zone]
   }
 }
 
-resource "oci_core_subnet" "public" {
-  compartment_id    = local.compartment_id
-  vcn_id            = oci_core_vcn.main.id
-  display_name      = "${local.name}-public-subnet"
-  cidr_block        = "10.0.1.0/24"
-  dns_label         = "public"
-  route_table_id    = oci_core_route_table.public.id
-  security_list_ids = [oci_core_security_list.public.id]
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "${local.name}-public" }
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+}
+
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Cloud firewall. Ubuntu's AWS image has no host firewall turned on, so this is the only one.
+resource "aws_security_group" "vm" {
+  name        = local.name
+  description = "SSH, HTTP and HTTPS in; everything out"
+  vpc_id      = aws_vpc.main.id
+  tags        = { Name = local.name }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ssh" {
+  security_group_id = aws_security_group.vm.id
+  description       = "SSH"
+  cidr_ipv4         = var.ssh_allowed_cidr
+  ip_protocol       = "tcp"
+  from_port         = 22
+  to_port           = 22
+}
+
+resource "aws_vpc_security_group_ingress_rule" "web" {
+  for_each          = { http = 80, https = 443 }
+  security_group_id = aws_security_group.vm.id
+  description       = upper(each.key)
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = each.value
+  to_port           = each.value
+}
+
+# Path MTU discovery (ICMP type 3, code 4).
+resource "aws_vpc_security_group_ingress_rule" "pmtu" {
+  security_group_id = aws_security_group.vm.id
+  description       = "Path MTU discovery"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "icmp"
+  from_port         = 3
+  to_port           = 4
+}
+
+resource "aws_vpc_security_group_egress_rule" "all" {
+  security_group_id = aws_security_group.vm.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
 }
 
 # ---------------------------------------------------------------- VM
 
-resource "oci_core_instance" "vm" {
-  compartment_id      = local.compartment_id
-  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
-  display_name        = local.name
-  shape               = "VM.Standard.A1.Flex"
+resource "aws_key_pair" "vm" {
+  key_name   = local.name
+  public_key = trimspace(file(pathexpand(var.ssh_public_key_path)))
+}
 
-  shape_config {
-    ocpus         = var.instance_ocpus
-    memory_in_gbs = var.instance_memory_gbs
+resource "aws_instance" "vm" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.vm.id]
+  key_name               = aws_key_pair.vm.key_name
+
+  root_block_device {
+    volume_size = var.root_volume_gbs
+    volume_type = "gp3"
+    encrypted   = true
   }
 
-  source_details {
-    source_type             = "image"
-    source_id               = data.oci_core_images.ubuntu.images[0].id
-    boot_volume_size_in_gbs = var.boot_volume_gbs
-  }
-
-  create_vnic_details {
-    subnet_id        = oci_core_subnet.public.id
-    assign_public_ip = true
-    hostname_label   = "briefing"
+  # Metadata endpoint: session tokens only (IMDSv2).
+  metadata_options {
+    http_tokens = "required"
   }
 
   # No secrets here: user_data is readable from inside the VM via the metadata endpoint.
-  metadata = {
-    ssh_authorized_keys = trimspace(file(pathexpand(var.ssh_public_key_path)))
-    user_data = base64encode(templatefile("${path.module}/cloud-init.yaml.tftpl", {
-      first_boot_b64   = base64encode(file("${path.module}/first-boot.sh"))
-      repo_url         = var.repo_url
-      duckdns_domain   = var.duckdns_domain
-      node_major       = var.node_major
-      openclaw_version = var.openclaw_version
-      hermes_commit    = var.hermes_commit
-    }))
-  }
+  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    first_boot_b64   = base64encode(file("${path.module}/first-boot.sh"))
+    repo_url         = var.repo_url
+    duckdns_domain   = var.duckdns_domain
+    node_major       = var.node_major
+    openclaw_version = var.openclaw_version
+    hermes_commit    = var.hermes_commit
+  })
+
+  tags = { Name = local.name }
 
   # A newer image or an edited first-boot script must not silently replace the VM
   # (that would wipe the agents' state). Rebuild on purpose with:
-  #   terraform apply -replace=oci_core_instance.vm
+  #   terraform apply -replace=aws_instance.vm
   lifecycle {
-    ignore_changes = [source_details[0].source_id, metadata]
+    ignore_changes = [ami, user_data]
   }
 }

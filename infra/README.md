@@ -1,27 +1,30 @@
 # infra
 
-One Oracle Always Free Arm VM (A1.Flex, 1 OCPU / 6 GB, Ubuntu 24.04), its network, and its first-boot setup.
-Cost: $0 if you stay inside Always Free.
+One AWS VM (`m7i-flex.large`, 2 vCPU / 8 GB, Ubuntu 24.04), its network, and its first-boot setup.
+Cost: paid from AWS Free plan credits (about $2.50/day with the public IP and 30 GB disk). Nothing is charged to a card.
+
+Why AWS and not Oracle: see `DECISIONS.md` #6. The Oracle version is in git history (commit `1ee3b1b`).
 
 | File | What it does |
 |---|---|
-| `versions.tf`, `variables.tf`, `main.tf`, `outputs.tf` | VCN, internet gateway, route table, firewall (22, 80, 443), subnet, VM |
+| `versions.tf`, `variables.tf`, `main.tf`, `outputs.tf` | VPC, internet gateway, route table, subnet, security group (22, 80, 443), key pair, VM |
 | `cloud-init.yaml.tftpl` | Hands `first-boot.sh` and its settings to the VM. No secrets |
-| `first-boot.sh` | Runs once as root: users, firewall, Node 24, gh, Caddy, DuckDNS updater, OpenClaw and Hermes (pinned), main-only checkout |
+| `first-boot.sh` | Runs once as root: users, Node 24, gh, Caddy, DuckDNS updater, OpenClaw and Hermes (pinned), main-only checkout |
 | `push-secrets.sh` | Run after boot from your laptop: copies key files in, points DuckDNS at the VM, signs the agents user in to GitHub |
-| `apply-retry.sh` | Retries `terraform apply` while Oracle reports "Out of host capacity" |
 
 ## Rebuild from scratch
 
-Needs: an Oracle account with an API key in `~/.oci/config`, Terraform 1.6+, an SSH key pair, and the three key files
-(`agents.env`, `app.env`, `root.env`) in a `secrets/` folder next to the repo.
+Needs:
+- An AWS account on the Free plan, with an IAM user that has `AmazonEC2FullAccess`.
+  Its access key is saved as a CLI profile: `aws configure --profile confer`.
+- Terraform 1.6+, and an SSH key pair at `~/.ssh/confer_vm`.
+- The three key files (`agents.env`, `app.env`, `root.env`) in a `secrets/` folder next to the repo.
 
 ```
 cd infra
-cp terraform.tfvars.example terraform.tfvars      # fill in tenancy_ocid
 terraform init
-terraform plan                                     # expect: 6 to add
-terraform apply                                    # or ./apply-retry.sh if Oracle has no capacity
+terraform plan                                     # expect: 13 to add
+terraform apply
 ./push-secrets.sh                                  # waits for first boot (~10 min), then copies keys in
 ```
 
@@ -41,5 +44,7 @@ Caddy serves `https://<duckdns_domain>.duckdns.org` and forwards to `127.0.0.1:8
 ## Safety notes
 
 - Keys never go through Terraform or cloud-init: both end up readable (state file, VM metadata endpoint).
-- Changing the image or `first-boot.sh` does not replace the VM. Rebuild on purpose: `terraform apply -replace=oci_core_instance.vm`.
+- Changing the image or `first-boot.sh` does not replace the VM. Rebuild on purpose: `terraform apply -replace=aws_instance.vm`.
+- Reboot rather than stop: a stop and start gives the VM a new public IP. DuckDNS follows within 5 minutes;
+  run `terraform apply -refresh-only` to update the `ssh` output.
 - Terraform state is local (`terraform.tfstate`, git-ignored). Back it up.
