@@ -16,7 +16,7 @@ RUN_TIMEOUT=${RUN_TIMEOUT:-1200}               # seconds per agent run; neither 
 DRY_RUN=${DRY_RUN:-0}
 BUILDERS=(builder-ingest builder-web tester)   # agents that take assign:<agent> issues and fix sent-back PRs
 declare -A RUNTIME=(
-  [orchestrator]=hermes [reviewer]=hermes [debt-lead]=hermes
+  [orchestrator]=hermes [reviewer]=hermes
   [builder-ingest]=openclaw [builder-web]=openclaw [tester]=openclaw
 )
 
@@ -218,14 +218,7 @@ for agent in "${BUILDERS[@]}"; do
   done
 done
 
-# ---------------------------------------------------------------- 4. debt-lead
-
-for n in $(issues_with debt-sweep); do
-  wake debt-lead "issue-$n" "Issue #$n has debt-sweep. Run the sweep."
-  exit 0
-done
-
-# ---------------------------------------------------------------- 5. orchestrator
+# ---------------------------------------------------------------- 4. orchestrator
 
 board() {
   gh issue list -R "$REPO" --state all --limit 300 --json number,state,labels \

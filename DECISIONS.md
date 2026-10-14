@@ -13,6 +13,7 @@ Newest section first.
 | 13 | **Groq is not configured for any agent** | Its free tier allows 8,000 tokens a minute, and one agent request is 12,000–28,000 tokens. Left for the app's own summaries | |
 | 14 | **The prompts are copied into each runtime before every run** (`agents/sync-prompts.sh`), not symlinked | OpenClaw refuses symlinked prompt files. Copying from the `main` checkout means a prompt changes only through a merged PR | |
 | 15 | **The tester runs on `gemma4:31b`, not `nemotron-3-super`** | In the smoke test (one read-only task per agent), `nemotron-3-super` ran no command and made up its answer: a commit, a PR and 17 issues that don't exist. `gemma4:31b` and `nemotron-3-ultra` both ran the commands and answered correctly; `gemma4:31b` used half the tokens. The tester and reviewer now share a family (Google), but neither shares the builders' | `agents/openclaw/openclaw.json5` |
+| 16 | **No debt-lead for now.** The team is five agents: orchestrator, two builders, tester, reviewer | The brief asks for those four roles. The tech-debt sweep was an extra, and cutting it keeps the build week on the core loop. The `tech-debt` label stays, so any agent can still file one | The debt-lead's prompt, Hermes settings and dispatcher step are in git history (commit `bc4a7ca`) |
 
 ## Infra: move to AWS (2026-10-14)
 

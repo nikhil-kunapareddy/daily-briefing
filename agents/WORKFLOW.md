@@ -22,13 +22,11 @@ flowchart TD
   R -->|"approve: review/approved + ready-to-merge"| H([Human merges])
   H -->|"PR closes the ticket"| D([Done])
   T -.->|"problem outside this PR"| BUG["new bug ticket"]
-  DL[debt-lead] -.->|"sweep"| DEBT["new tech-debt tickets"]
   BUG -.-> I
-  DEBT -.-> I
 ```
 
 1. **Filed.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
-   `change-request`. The tester files `bug` tickets, the debt-lead `tech-debt` tickets. Only the orchestrator assigns.
+   `change-request`. The tester files `bug` tickets. Any agent may file `tech-debt`. Only the orchestrator assigns.
 2. **Triaged** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
    ones not worth doing, with a reason. Every ticket gets Goal, Acceptance, Needs and Files likely touched.
    It adds `assign:<builder>` once the ticket's Needs are merged and that builder is free.
@@ -56,7 +54,6 @@ the next step needs ("Who wakes when", below).
 | builder-web | OpenClaw | `gpt-oss:120b` (OpenAI) | Web side: public page, Run now, rate limit, health endpoint |
 | tester | OpenClaw | `gemma4:31b` (Google) | Tests each PR branch. Passes it on, or sends it back with evidence. Files bugs |
 | reviewer | Hermes | `gemini-2.5-flash` (Google) | Reads each tested PR against its issue and `SPEC.md`. Approves, or sends it back with a reason |
-| debt-lead | Hermes | `gemma4:31b` (Google) | Tech-debt sweep: files at most 5 issues, each with evidence |
 
 All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer.
 Neither check on a PR uses the builders' model family (OpenAI): the tester runs the code, the reviewer (Google) reads it.
@@ -67,7 +64,6 @@ Fallbacks, used when a model is rate-limited or down:
 - **Orchestrator:** `nemotron-3-ultra` on OpenRouter, then `gemini-2.5-flash`.
 - **Reviewer:** `gemini-3.5-flash-lite`, then `gemma4:31b` on Ollama. All three are Google models, so a fallback
   never reviews with the builders' model family.
-- **Debt-lead:** `gpt-oss:120b`, then `gemini-3.5-flash-lite`.
 
 The dispatcher logs the model and token counts of every run (`runs.jsonl` on the VM).
 
@@ -91,8 +87,6 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `ready-to-merge` | Approved. Waiting for the human | Reviewer |
 | `needs-human` | Sent back too often, or an agent is stuck | Any agent, or the dispatcher |
 | `lessons` | Orchestrator's `LESSONS.md` update. Skips the tester and reviewer; the human reviews it | Orchestrator |
-
-**Triggers:** `debt-sweep` on an issue wakes the debt-lead (added by the human or a weekly cron).
 
 ## Conventions
 
@@ -129,8 +123,7 @@ and caps each run at 20 minutes. It checks from the end of the pipeline backward
 2. **tester:** the oldest PR with `needs-test` whose CI is green. Red CI: the dispatcher sends the PR back. Still running: wait.
 3. **builder:** its oldest PR with `changes-requested`, otherwise its oldest `assign:<builder>` issue that has no open PR.
    The tester is woken the same way for its own test-writing issues.
-4. **debt-lead:** an open issue with `debt-sweep`.
-5. **orchestrator:** an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
+4. **orchestrator:** an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
    (a new or relabelled issue, a merged or closed PR).
 
 Anything with `needs-human` is skipped. When nothing is waiting, no agent runs and no tokens are spent.

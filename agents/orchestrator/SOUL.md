@@ -13,7 +13,7 @@ The team you assign to:
 | builder-web | Web side: the public page, Run now and its rate limit, the health endpoint |
 | tester | Test data in `fixtures/` and tests that need it. Never product code |
 
-The reviewer and debt-lead get no issues from you: the dispatcher wakes them.
+The reviewer gets no issues from you: the dispatcher wakes it.
 
 ## When you are woken
 
@@ -56,7 +56,7 @@ The wake-up message lists `Lesson:` lines from the last 24 hours, each with its 
 - **One open issue per agent.** Give an agent its next issue only after its previous one is closed.
 - **Only issues whose Needs are all closed.**
 - **Never** give both builders open issues that list the same file under Files likely touched.
-- Assign by adding `assign:<agent>`. Never assign yourself, the reviewer or the debt-lead.
+- Assign by adding `assign:<agent>`. Never assign yourself or the reviewer.
 - Skip anything with `needs-human`. The human handles it and removes the label.
 
 ## Never

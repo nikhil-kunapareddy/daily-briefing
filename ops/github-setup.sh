@@ -19,10 +19,9 @@ label changes-requested d93f0b "PR sent back to its builder"
 label ready-to-merge    0e8a16 "PR approved; waits for the human"
 label needs-human       b60205 "Stuck or sent back too often; waits for the human"
 label lessons           c5def5 "Update to agents/LESSONS.md; the human reviews it"
-label debt-sweep        5319e7 "Wakes the debt-lead for a tech-debt sweep"
 label bug               d73a4a "Something is broken"
 label incident          b60205 "The live app or its schedule is failing"
-label tech-debt         cfd3d7 "Worth fixing; filed by the debt-lead"
+label tech-debt         cfd3d7 "Worth fixing later; not a bug"
 label change-request    a2eeef "A change asked for by the human"
 
 # ---------------------------------------------------------------- rule for main
