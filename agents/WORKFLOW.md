@@ -35,7 +35,7 @@ flowchart TD
   R -->|"yes · review/approved"| M
   R -.->|"no + Lesson"| B
 
-  classDef ticket fill:#24292f,stroke:#24292f,color:#fff
+  classDef ticket fill:#ddf4ff,stroke:#0969da,stroke-width:3px,color:#000
   classDef step fill:#eef2ff,stroke:#6366f1,color:#000
   classDef check fill:#fff,stroke:#6366f1,color:#000
   classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
