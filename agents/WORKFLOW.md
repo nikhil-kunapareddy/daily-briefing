@@ -6,23 +6,40 @@ For humans, this is also the design of the team.
 ## Life of a ticket
 
 All work starts as a ticket: a GitHub issue. A ticket ends as a merged PR, or closed with a reason.
+Read the diagram top to bottom. "yes" arrows are the main path, "no" arrows send the PR back to step 3, dotted arrows are side exits.
 
 ```mermaid
 flowchart TD
-  I["Ticket (GitHub issue)<br/>plan from SPEC.md · change-request · bug · tech-debt"] --> O[orchestrator]
-  O -->|"too big: split into new tickets"| I
-  O -->|"duplicate or not worth doing"| X([Closed with a reason])
-  O -->|"Goal, Acceptance, Needs + assign:builder-*"| B[builder-ingest / builder-web]
-  B -->|"own pytest passes: PR + needs-test"| CI{{"CI: pytest"}}
-  CI -->|"red: dispatcher sends it back"| B
-  CI -->|green| T[tester]
-  T -->|"fail: changes-requested + Lesson"| B
-  T -->|"pass: test/passed + needs-review"| R[reviewer]
-  R -->|"reject: changes-requested + Lesson"| B
-  R -->|"approve: review/approved + ready-to-merge"| H([Human merges])
-  H -->|"PR closes the ticket"| D([Done])
-  T -.->|"problem outside this PR"| BUG["new bug ticket"]
-  BUG -.-> I
+  S1["<b>1 · Filed</b><br/>new issue, by you or an agent"]
+  S2["<b>2 · Triaged</b> · orchestrator<br/>Goal, Acceptance, Needs<br/>label assign:builder-*"]
+  S3["<b>3 · Built</b> · builder<br/>PR: Closes #N<br/>label needs-test"]
+  S4{{"<b>4 · CI</b><br/>pytest green?"}}
+  S5{{"<b>5 · Tested</b> · tester<br/>works on test data?"}}
+  S6{{"<b>6 · Reviewed</b> · reviewer<br/>does what the ticket asks?"}}
+  S7["<b>7 · Merged</b> · you<br/>label ready-to-merge<br/>ticket closes"]
+  CLOSED(["Closed with a reason"])
+  HUMAN(["Waits for you<br/>label needs-human"])
+
+  S1 --> S2 --> S3 --> S4
+  S4 -->|yes| S5
+  S5 -->|"yes · test/passed"| S6
+  S6 -->|"yes · review/approved"| S7
+
+  S4 -->|"no · sent back"| S3
+  S5 -->|"no · sent back + Lesson"| S3
+  S6 -->|"no · sent back + Lesson"| S3
+
+  S2 -.->|"duplicate or not needed"| CLOSED
+  S2 -.->|"too big: split"| S1
+  S3 -.->|"3rd send-back"| HUMAN
+  S5 -.->|"new bug ticket"| S1
+
+  classDef step fill:#eef2ff,stroke:#6366f1,color:#000
+  classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
+  classDef side fill:#fff3cd,stroke:#b58105,color:#000
+  class S1,S2,S3,S4,S5,S6 step
+  class S7 done
+  class CLOSED,HUMAN side
 ```
 
 1. **Filed.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
