@@ -1,0 +1,30 @@
+# Secrets: keys live outside the repo, in ../secrets/
+.env
+*.env
+*.pem
+secrets/
+
+# Terraform: state and variable files can hold secrets
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+apply-retry.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.coverage
+
+# Runtime data
+*.db
+*.db-wal
+*.db-shm
+traces/raw/
+
+# macOS
+.DS_Store

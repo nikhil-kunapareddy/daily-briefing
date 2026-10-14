@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+# The tenancy OCID is the `tenancy=` line in ~/.oci/config.
+tenancy_ocid = "ocid1.tenancy.oc1..xxxxxxxx"
+
+# Optional overrides (defaults in variables.tf):
+# region           = "us-sanjose-1"
+# ssh_allowed_cidr = "203.0.113.7/32"
+# duckdns_domain   = "dailyresearch"

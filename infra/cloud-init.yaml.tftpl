@@ -1,0 +1,31 @@
+#cloud-config
+# Rendered by Terraform. Runs once on first boot. No secrets: this file is readable from the VM's metadata endpoint.
+package_update: true
+package_upgrade: true
+packages:
+  - git
+  - curl
+  - ca-certificates
+  - gnupg
+  - jq
+  - sqlite3
+  - python3-venv
+  - build-essential
+  - libatomic1
+
+write_files:
+  - path: /opt/first-boot/config.env
+    permissions: "0644"
+    content: |
+      REPO_URL=${repo_url}
+      DUCKDNS_DOMAIN=${duckdns_domain}
+      NODE_MAJOR=${node_major}
+      OPENCLAW_VERSION=${openclaw_version}
+      HERMES_COMMIT=${hermes_commit}
+  - path: /opt/first-boot/first-boot.sh
+    permissions: "0755"
+    encoding: b64
+    content: ${first_boot_b64}
+
+runcmd:
+  - [bash, -c, "/opt/first-boot/first-boot.sh >> /var/log/first-boot.log 2>&1"]
