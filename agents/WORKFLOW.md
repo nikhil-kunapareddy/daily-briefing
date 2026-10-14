@@ -114,7 +114,11 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 
 - **Branch:** `<agent>/<issue>-<short-name>`, for example `builder-ingest/3-new-items`. The dispatcher finds a PR's builder from this prefix.
 - **PR body:** first line `Closes #<issue>`. Then what changed, and how you tested it (paste pytest's summary line).
-- **Commits:** author name is your agent name. End each message with the trailer `Agent: <your name>`.
+- **Commits:** author name is your agent name. End each message with two trailers: `Agent: <your name>` and `Model: <your model>`.
+- **Signatures:** everything an agent writes on GitHub ends with one line naming the agent and its model:
+  `— <agent> · <model>`, for example `— tester · gemma4:31b`. That means every PR body, issue and comment.
+  The wake-up message gives your exact signature. If you know a fallback model answered instead, sign with that one.
+  The dispatcher signs its own comments `— dispatcher · no model`.
 - **Commit statuses** on the PR's latest commit: `test/passed` (tester) and `review/approved` (reviewer).
   A new push clears both, so every fix is tested and reviewed again. `main` only accepts a PR with both, plus green CI, merged by the human.
   A tester's own PR can't be tested by the tester: the dispatcher sets its `test/passed` to "not self-tested" and sends it to the reviewer.
@@ -169,7 +173,7 @@ The repo is `nikhil-kunapareddy/daily-briefing`. `gh` is already signed in.
 | Comment (use a file for anything longer than a line) | `gh pr comment N --body-file note.md` · `gh issue comment N --body-file note.md` |
 | Open a PR | `gh pr create --base main --title "…" --body-file pr.md --label needs-test` |
 | File an issue | `gh issue create --title "…" --body-file issue.md --label bug` |
-| Commit | `git commit -m "…" --trailer "Agent: <your name>"` |
+| Commit | `git commit -m "…" --trailer "Agent: <your name>" --trailer "Model: <your model>"` |
 
 ## LESSONS.md
 

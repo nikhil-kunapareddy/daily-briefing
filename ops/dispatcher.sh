@@ -74,23 +74,28 @@ has_open_pr() {
 }
 
 relabel() { act gh pr edit "$1" -R "$REPO" --add-label "$2" --remove-label "$3" >/dev/null; }
-comment() { act gh pr comment "$1" -R "$REPO" --body "$2" >/dev/null; }
+comment() { act gh pr comment "$1" -R "$REPO" --body "$2"$'\n\n'"— dispatcher · no model" >/dev/null; }
 
 # ---------------------------------------------------------------- waking an agent
 
 # wake <agent> <key> <task line>. key names the issue or PR, e.g. pr-12, issue-7, board.
 wake() {
   local agent=$1 key=$2 task=$3
-  local stamp msg out rc start secs usage before
+  local stamp msg out rc start secs usage before model
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   msg=$STATE/runs/$stamp-$agent-$key.msg.md
   out=$STATE/runs/$stamp-$agent-$key.out       # stdout: the runtime's JSON. stderr goes to .err
 
+  model=$(model_of "$agent")
   {
     echo "Wake-up from the dispatcher, $(now)."
     echo
     echo "Task: $task"
     echo "Repo: $REPO. Read the details yourself with gh. Team rules: WORKFLOW.md."
+    echo
+    echo "You are $agent, running on $model. Sign everything you write on GitHub (WORKFLOW.md, Signatures):"
+    echo "- last line of every PR body, issue and comment: — $agent · $model"
+    echo "- commit trailers: Agent: $agent and Model: $model"
     case $agent in builder-*|tester)
       echo
       echo "Lessons from earlier rejections (agents/LESSONS.md):"
@@ -129,12 +134,22 @@ wake() {
     if [[ $key =~ ^(pr|issue)-[0-9]+$ ]]; then   # the issues API covers PRs too
       gh api "repos/$REPO/issues/$n/labels" -f "labels[]=needs-human" >/dev/null
       gh api "repos/$REPO/issues/$n/comments" \
-        -f body="Dispatcher: $agent failed twice on this (last exit code $rc). Needs a human. Log: \`$out\` on the VM." >/dev/null
+        -f body="Dispatcher: $agent failed twice on this (last exit code $rc). Needs a human. Log: \`$out\` on the VM."$'\n\n'"— dispatcher · no model" >/dev/null
     fi
     log "needs-human $key after 2 failed runs of $agent"
   else
     echo 1 > "$STATE/fails/$agent-$key"
   fi
+}
+
+# model_of <agent>: its configured main model, without the provider, for the wake-up message and signatures.
+model_of() {
+  local m
+  case ${RUNTIME[$1]} in
+    openclaw) m=$(cd "$STATE" && openclaw config get "agents.entries.$1.model.primary" 2>/dev/null | tail -1) ;;
+    hermes) m=$(hermes -p "$1" config get model.default 2>/dev/null) ;;
+  esac
+  echo "${m#ollama-cloud/}" | sed 's#^google/##'
 }
 
 # item_state <key>: what a useful run on pr-N or issue-N changes, as one line. Empty for other keys.
