@@ -3,6 +3,50 @@
 How work moves between the agents. Every agent follows these rules.
 For humans, this is also the design of the team.
 
+## Life of a ticket
+
+All work starts as a ticket: a GitHub issue. A ticket ends as a merged PR, or closed with a reason.
+
+```mermaid
+flowchart TD
+  I["Ticket (GitHub issue)<br/>plan from SPEC.md · change-request · bug · tech-debt"] --> O[orchestrator]
+  O -->|"too big: split into new tickets"| I
+  O -->|"duplicate or not worth doing"| X([Closed with a reason])
+  O -->|"Goal, Acceptance, Needs + assign:builder-*"| B[builder-ingest / builder-web]
+  B -->|"own pytest passes: PR + needs-test"| CI{{"CI: pytest"}}
+  CI -->|"red: dispatcher sends it back"| B
+  CI -->|green| T[tester]
+  T -->|"fail: changes-requested + Lesson"| B
+  T -->|"pass: test/passed + needs-review"| R[reviewer]
+  R -->|"reject: changes-requested + Lesson"| B
+  R -->|"approve: review/approved + ready-to-merge"| H([Human merges])
+  H -->|"PR closes the ticket"| D([Done])
+  T -.->|"problem outside this PR"| BUG["new bug ticket"]
+  DL[debt-lead] -.->|"sweep"| DEBT["new tech-debt tickets"]
+  BUG -.-> I
+  DEBT -.-> I
+```
+
+1. **Filed.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
+   `change-request`. The tester files `bug` tickets, the debt-lead `tech-debt` tickets. Only the orchestrator assigns.
+2. **Triaged** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
+   ones not worth doing, with a reason. Every ticket gets Goal, Acceptance, Needs and Files likely touched.
+   It adds `assign:<builder>` once the ticket's Needs are merged and that builder is free.
+3. **Built** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
+   then a PR that starts `Closes #<issue>`, labelled `needs-test`.
+4. **CI** runs pytest on the PR. If it's red, the dispatcher sends the PR back with no model call.
+5. **Tested** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
+   Fail: label `changes-requested`, with evidence and a `Lesson:` line.
+6. **Reviewed** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
+   Reject: label `changes-requested`, with the reason and a `Lesson:` line.
+7. **Merged** by the human. The PR closes the ticket; the orchestrator sees the change and assigns the next ticket.
+
+A sent-back PR goes back to step 3 on the same branch. The third send-back gets `needs-human` instead (rule 5).
+Cheap checks run first, so the strong reviewer model only sees code that already works.
+
+No agent hands work to another directly. Every 5 minutes the dispatcher reads the labels and wakes the one agent
+the next step needs ("Who wakes when", below).
+
 ## Team
 
 | Agent | Runtime | Model (family) | Job |
@@ -26,26 +70,6 @@ Fallbacks, used when a model is rate-limited or down:
 - **Debt-lead:** `gpt-oss:120b`, then `gemini-3.5-flash-lite`.
 
 The dispatcher logs the model and token counts of every run (`runs.jsonl` on the VM).
-
-## Ticket flow
-
-```mermaid
-flowchart TD
-  H([Human]) -->|"SPEC.md + plan issue"| O[orchestrator]
-  O -->|"issue + assign:builder-*"| B[builder-ingest / builder-web]
-  B -->|"own pytest passes: PR + needs-test"| CI{{"CI: pytest"}}
-  CI -->|red| B
-  CI -->|green| T[tester]
-  T -->|"fail: changes-requested + Lesson"| B
-  T -->|"pass: test/passed + needs-review"| R[reviewer]
-  R -->|"reject: changes-requested + Lesson"| B
-  R -->|"approve: review/approved + ready-to-merge"| M([Human merges])
-  M -->|"issue closes; board changed"| O
-  T -->|"problem outside this PR: bug issue"| O
-```
-
-Cheap checks run first, so the strong reviewer model only sees code that already works.
-The step from a red CI back to the builder is done by the dispatcher, with no model call.
 
 ## Labels
 
