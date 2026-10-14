@@ -1,6 +1,6 @@
 # infra
 
-One Oracle Always Free Arm VM (A1.Flex, 2 OCPU / 12 GB, Ubuntu 24.04), its network, and its first-boot setup.
+One Oracle Always Free Arm VM (A1.Flex, 1 OCPU / 6 GB, Ubuntu 24.04), its network, and its first-boot setup.
 Cost: $0 if you stay inside Always Free.
 
 | File | What it does |

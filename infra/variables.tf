@@ -27,15 +27,16 @@ variable "ssh_allowed_cidr" {
   default     = "0.0.0.0/0"
 }
 
-# Always Free allows up to 4 OCPU / 24 GB of A1 in total.
+# Always Free allows up to 4 OCPU / 24 GB of A1 in total. 1 / 6 because the smaller shape
+# finds capacity more often, and nothing heavy runs on the VM (models are remote, one agent at a time).
 variable "instance_ocpus" {
   type    = number
-  default = 2
+  default = 1
 }
 
 variable "instance_memory_gbs" {
   type    = number
-  default = 12
+  default = 6
 }
 
 variable "boot_volume_gbs" {
