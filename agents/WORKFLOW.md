@@ -161,6 +161,8 @@ The repo is `nikhil-kunapareddy/daily-briefing`. `gh` is already signed in.
 | Read an issue or PR with its comments | `gh issue view N --comments` · `gh pr view N --comments` |
 | See a PR's changes | `gh pr diff N` |
 | Check out a PR | `gh pr checkout N` |
+| Run the tests (builders, tester) | `.venv/bin/python -m pytest -q` in your clone. The `.venv` is already there, with pytest |
+| Install the dependencies | `.venv/bin/pip install -q -r requirements.txt` |
 | Latest commit of a PR | `gh pr view N --json headRefOid -q .headRefOid` |
 | Swap a label | `gh pr edit N --add-label needs-review --remove-label needs-test` |
 | Post a status | `gh api repos/nikhil-kunapareddy/daily-briefing/statuses/SHA -f state=success -f context=test/passed -f description="…"` (`state=failure` to fail) |

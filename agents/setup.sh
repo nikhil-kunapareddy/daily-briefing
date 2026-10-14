@@ -31,6 +31,13 @@ for agent in "${OPENCLAW_AGENTS[@]}" "${HERMES_AGENTS[@]}"; do
   git -C "$repo" config user.email "$email"
   echo "  $agent: $repo ($agent <$email>)"
 done
+# The OpenClaw agents run tests in their clone's .venv (allowlisted in exec-allowlist.txt). .gitignore keeps it out of commits.
+for agent in "${OPENCLAW_AGENTS[@]}"; do
+  venv=$WORK/$agent/repo/.venv
+  [ -x "$venv/bin/python" ] || python3 -m venv "$venv"
+  "$venv/bin/pip" install -q --upgrade pip pytest
+done
+echo "  .venv with pytest in ${OPENCLAW_AGENTS[*]}"
 
 # ---------------------------------------------------------------- OpenClaw
 
