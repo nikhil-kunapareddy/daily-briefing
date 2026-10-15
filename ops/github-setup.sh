@@ -18,13 +18,42 @@ label needs-review      0e8a16 "PR passed testing; waits for the reviewer"
 label changes-requested d93f0b "PR sent back to its builder"
 label ready-to-merge    0e8a16 "PR approved; waits for the human"
 label needs-human       b60205 "Stuck or sent back too often; waits for the human"
-label lessons           c5def5 "Update to agents/LESSONS.md; the human reviews it"
+label lessons           c5def5 "The pinned Lessons issue: the human ticks the lessons to keep"
 label bug               d73a4a "Something is broken"
 label incident          b60205 "The live app or its schedule is failing"
 label tech-debt         cfd3d7 "Worth fixing later; not a bug"
 label change-request    a2eeef "A change asked for by the human"
 label needs-approval    fbca04 "Filed by an agent or a stranger; waits for the human's OK"
 label rate-limit        b60205 "An agent can't reach any of its models. Filed and closed by the dispatcher"
+
+# ---------------------------------------------------------------- the Lessons issue (agents/WORKFLOW.md, Lessons)
+# One pinned issue holds the lessons as a checklist: the dispatcher adds each new one unticked, the human ticks the
+# ones to keep. Made once; lessons already in agents/LESSONS.md start ticked.
+echo "== lessons issue"
+n=$(gh issue list -R "$REPO" --state open --label lessons --json number,title --jq '[.[] | select(.title == "Lessons")][0].number // empty')
+if [ -z "$n" ]; then
+  body=$(mktemp)
+  {
+    echo "Lessons the agents learned from send-backs. Every agent's wake-up message includes this list."
+    echo
+    echo "- **Keep a lesson:** tick its box. Ticked lessons reach the agents as reviewed."
+    echo "- **Drop a lesson:** delete its line."
+    echo "- New lessons appear here unticked as soon as a send-back posts one. The agents get the newest 10 of those"
+    echo "  too, marked \"not reviewed yet\"."
+    echo "- Only you edit this list. The dispatcher adds new lessons and undoes any other edit by the agents' account."
+    echo
+    echo "<!-- lessons -->"
+    awk '/^- / { sub(/^- /, "- [x] "); print }' "$(dirname "$0")/../agents/LESSONS.md"
+    echo "<!-- /lessons -->"
+  } > "$body"
+  url=$(gh issue create -R "$REPO" --title "Lessons" --label lessons --body-file "$body")
+  n=${url##*/}
+  gh issue pin "$n" -R "$REPO" >/dev/null
+  rm -f "$body"
+  echo "  created and pinned #$n"
+else
+  echo "  #$n"
+fi
 
 # ---------------------------------------------------------------- rule for main
 # Every change arrives by PR. A PR merges only with green CI, the tester's and reviewer's statuses, and an

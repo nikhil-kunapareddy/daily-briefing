@@ -31,6 +31,7 @@ mkdir -p "$STATE/runs" "$STATE/fails"
 # the clock. The 2-minute cron start catches what no agent does: CI finishing, and the human's merges, approvals
 # and labels. At most MAX_CHAIN runs in a row; the next cron start carries on.
 MAX_CHAIN=${MAX_CHAIN:-12}
+APPROVALS_PER_DAY=${APPROVALS_PER_DAY:-3}       # tickets from agents the orchestrator may approve in 24 hours
 if [ "${1:-}" = --chain ]; then
   exec 8>"$STATE/chain.lock"
   flock -n 8 || exit 0                         # a chain is already running
@@ -131,7 +132,7 @@ comment() { act gh pr comment "$1" -R "$REPO" --body "$2"$'\n\n'"— dispatcher 
 # wake <agent> <key> <task line>. key names the issue or PR, e.g. pr-12, issue-7, board.
 wake() {
   local agent=$1 key=$2 task=$3
-  local stamp msg out rc start secs usage before model fresh backup=""
+  local stamp msg out rc start secs usage before model backup=""
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   msg=$STATE/runs/$stamp-$agent-$key.msg.md
   out=$STATE/runs/$stamp-$agent-$key.out       # stdout: the runtime's JSON. stderr goes to .err
@@ -149,15 +150,14 @@ wake() {
     echo "- last line of every PR body, issue and comment: — $agent · $model"
     echo "- commit trailers: Agent: $agent and Model: $model"
     echo
-    echo "Lessons from earlier rejections (agents/LESSONS.md, reviewed by the human):"
+    echo "Lessons from earlier send-backs, kept by the human (the pinned Lessons issue${lessons_issue:+, #$lessons_issue}):"
     echo
-    cat "$ROOT/agents/LESSONS.md"
-    fresh=$([ "$key" = lessons ] || new_lessons)    # a "Collect lessons" task lists them already
-    if [ -n "$fresh" ]; then
+    echo "${reviewed_lessons:-(none yet)}"
+    if [ -n "$unreviewed_lessons" ]; then
       echo
-      echo "New lessons, posted since the human last merged LESSONS.md and not reviewed yet. Follow one only where it fits your task:"
+      echo "New lessons, not reviewed yet. Follow one only where it fits your task:"
       echo
-      echo "$fresh"
+      echo "$unreviewed_lessons"
     fi
   } > "$msg"
 
@@ -226,18 +226,6 @@ wake() {
   else
     echo 1 > "$STATE/fails/$agent-$key"
   fi
-}
-
-# new_lessons: Lesson: lines posted since the last merged lessons PR was opened, minus those already in LESSONS.md,
-# newest 10. Every agent gets them on its next wake-up, before the orchestrator curates them and the human merges.
-# (Nothing else runs while the orchestrator writes a lessons PR, so no lesson falls between it and the merge.)
-new_lessons() {
-  local since
-  since=$(gh pr list -R "$REPO" --state merged --label lessons --limit 1 --json createdAt --jq '.[0].createdAt // empty' 2>/dev/null) || true
-  [ -n "$since" ] || since=$(date -u -d '7 days ago' +%FT%TZ)
-  gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
-    --jq '.[] | select(.user.login == "'"$BOT"'") | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"' 2>/dev/null \
-    | grep -v -F -f <(grep -oE 'https://github\.com/[^ )]+' "$ROOT/agents/LESSONS.md") | tail -10 || true
 }
 
 # model_of <agent>: its configured main model, without the provider, for the wake-up message and signatures.
@@ -456,9 +444,10 @@ fi
 # Work must trace back to the human, so agents can't create work for each other without end.
 # Work is a ticket the human (the repo owner) filed, or a split of one: a ticket by the agents' account with a line
 # "Part of #N" and the orchestrator's signature, where the human filed #N. Anything else gets needs-approval and waits:
-# a tester's bug, tech-debt, a split of a split, an issue from a stranger on the public repo. The human removes the
-# label to let the team work on it, or closes the issue. Each issue is checked once (gated/<n>), so a removed label
-# stays removed.
+# a tester's bug, tech-debt, a split of a split, an issue from a stranger on the public repo.
+# Who approves (removes the label): for a ticket from the agents' account, the orchestrator when the dispatcher asks it
+# (section 5a, at most APPROVALS_PER_DAY a day), else the human. For anyone else's ticket, only the human.
+# Each issue is checked once (gated/<n> says what it is), so an approval stays.
 mkdir -p "$STATE/gated"
 owner_issues=$(gh issue list -R "$REPO" --state all --author "$OWNER" --limit 300 --json number --jq '[.[].number]')
 gated=0
@@ -469,17 +458,43 @@ while read -r n author parent; do
     [ "$DRY_RUN" = 1 ] || echo work > "$STATE/gated/$n"
     continue
   fi
+  if [ "$author" = "$BOT" ]; then
+    who="the orchestrator may approve it if it fits \`SPEC.md\` (at most $APPROVALS_PER_DAY a day); otherwise it waits for the human"
+    kind=agent
+  else
+    who="only the human can approve it"
+    kind=stranger
+  fi
   act gh issue edit "$n" -R "$REPO" --add-label needs-approval >/dev/null
-  act gh issue comment "$n" -R "$REPO" --body "Dispatcher: this ticket wasn't filed by the human or split from one of their tickets, so it waits for the human's OK. To let the team work on it, remove \`needs-approval\`. Otherwise close it.
+  act gh issue comment "$n" -R "$REPO" --body "Dispatcher: this ticket wasn't filed by the human or split from one of their tickets, so it waits for approval: $who. Approving means removing \`needs-approval\`; to reject it, close it.
 
 — dispatcher · no model" >/dev/null
-  [ "$DRY_RUN" = 1 ] || echo needs-approval > "$STATE/gated/$n"
+  [ "$DRY_RUN" = 1 ] || echo "needs-approval $kind" > "$STATE/gated/$n"
   log "needs-approval #$n (filed by $author${parent:+, part of #$parent})"
   gated=1
-done < <(jq -r '.[] | select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval"))
+done < <(jq -r '.[] | select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval" and .name != "lessons"))
   | (.body // "") as $b | [.number, .author.login,
       (if $b | test("— orchestrator · ") then ($b | capture("(?im)^[^a-z0-9#]*part of[^#\\n]*#(?<p>[0-9]+)").p // "") else "" end)]
   | @tsv' <<<"$issues")
+# An approval is the human removing needs-approval, or the orchestrator when asked (5a). If the agents' account removed
+# it any other time, it goes back on.
+while read -r n; do
+  [ -n "$n" ] || continue
+  case $(cat "$STATE/gated/$n" 2>/dev/null) in needs-approval*) ;; *) continue ;; esac
+  by=$(gh api "repos/$REPO/issues/$n/timeline" --paginate --jq '.[] | select(.event == "unlabeled" and .label.name == "needs-approval")
+    | .actor.login' 2>/dev/null | tail -1) || by=""
+  if [ "$by" = "$OWNER" ]; then
+    [ "$DRY_RUN" = 1 ] || echo "approved by the human" > "$STATE/gated/$n"
+    log "approved #$n by the human"
+  elif [ -n "$by" ]; then
+    act gh issue edit "$n" -R "$REPO" --add-label needs-approval >/dev/null
+    act gh issue comment "$n" -R "$REPO" --body "Dispatcher: \`needs-approval\` goes back on. Only the human approves a ticket, or the orchestrator when the dispatcher asks it to.
+
+— dispatcher · no model" >/dev/null
+    log "needs-approval #$n again: removed by $by without being asked"
+    gated=1
+  fi
+done < <(jq -r '.[] | select(all(.labels[]; .name != "needs-approval")) | .number' <<<"$issues")
 [ "$gated" = 0 ] || load_issues                 # an agent may have assigned it in the same run it filed it
 
 # ---------------------------------------------------------------- 0b. PRs that conflict with main, or fell behind it
@@ -602,6 +617,53 @@ while read -r pr branch sha merged_at; do
   echo "$verdict" > "$STATE/merged/$pr"
 done < <(jq -r '.[] | "\(.number) \(.headRefName) \(.mergeCommit.oid) \(.mergedAt)"' <<<"$merged")
 
+# ---------------------------------------------------------------- 0d. lessons: one pinned issue, no PR
+
+# Every Lesson: line in a send-back (a comment by the agents' account) goes at once into the pinned "Lessons" issue,
+# as an unticked checklist item. The human ticks a lesson to keep it, or deletes its line to drop it: no PR, no merge.
+# Every wake-up message carries the ticked lessons (reviewed, newest 20) and the newest 10 unticked ones (not reviewed
+# yet). Only the human edits the list: any other edit by the agents' account is undone (lessons-body is the
+# dispatcher's own last version). The issue is made by ops/github-setup.sh.
+lessons_issue=$(cat "$STATE/lessons-issue" 2>/dev/null) || lessons_issue=$(gh issue list -R "$REPO" --state open \
+  --label lessons --json number,title --jq '[.[] | select(.title == "Lessons")][0].number // empty' 2>/dev/null) || true
+lessons_body=""
+if [ -n "$lessons_issue" ]; then
+  [ "$DRY_RUN" = 1 ] || echo "$lessons_issue" > "$STATE/lessons-issue"
+  li=$(gh api graphql -f query='query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) {
+      issue(number: $n) { body editor { login } } } }' -f o="$OWNER" -f r="${REPO#*/}" -F n="$lessons_issue" \
+    --jq '.data.repository.issue' 2>/dev/null) || li=""
+  lessons_body=$(jq -r '.body // ""' <<<"$li" | tr -d '\r')
+  editor=$(jq -r '.editor.login // ""' <<<"$li")
+  last=$(cat "$STATE/lessons-body" 2>/dev/null) || last=""
+  if [ -n "$last" ] && [ "$lessons_body" != "$last" ] && [ "$editor" = "$BOT" ]; then
+    act gh issue edit "$lessons_issue" -R "$REPO" --body-file "$STATE/lessons-body" >/dev/null
+    log "lessons: undid an edit of #$lessons_issue by the agents' account (only the human edits it)"
+    lessons_body=$last
+  fi
+  scan_start=$(now)
+  since=$(cat "$STATE/lessons-scan" 2>/dev/null) || since=$(date -u -d '7 days ago' +%FT%TZ)
+  new=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
+      --jq '.[] | select(.user.login == "'"$BOT"'") | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- [ ] \(.) (\($u))"' \
+      2>/dev/null | tr -d '\r' | grep -v -F -f <(grep -oE 'https://github\.com/[^ )]+' <<<"$lessons_body") || true)
+  if [ -n "$new" ] && [ "$DRY_RUN" != 1 ]; then
+    if grep -q '^<!-- /lessons -->$' <<<"$lessons_body"; then   # new lines go just before the list's end marker
+      lessons_body=$(ADD=$new awk '/^<!-- \/lessons -->$/ { print ENVIRON["ADD"] } { print }' <<<"$lessons_body")
+    else
+      lessons_body="$lessons_body"$'\n'"$new"
+    fi
+    printf '%s\n' "$lessons_body" > "$STATE/lessons-body.new"
+    if gh issue edit "$lessons_issue" -R "$REPO" --body-file "$STATE/lessons-body.new" >/dev/null; then
+      log "lessons: added $(wc -l <<<"$new" | tr -d ' ') to #$lessons_issue"
+    fi
+  fi
+  if [ "$DRY_RUN" != 1 ]; then
+    printf '%s' "$lessons_body" > "$STATE/lessons-body"
+    echo "$scan_start" > "$STATE/lessons-scan"
+  fi
+fi
+reviewed_lessons=$(grep -E '^- \[[xX]\] ' <<<"$lessons_body" | sed -E 's/^- \[[xX]\] /- /' | tail -20 || true)
+unreviewed_lessons=$(grep -E '^- \[ \] ' <<<"$lessons_body" | sed -E 's/^- \[ \] /- /' | tail -10 || true)
+
 # ---------------------------------------------------------------- 1. reviewer
 
 while read -r n branch sha; do
@@ -665,30 +727,14 @@ Fix it in a new PR, on a branch $agent/$n-fix-<short-name>. If the cause isn't i
   done
 done
 
-# ---------------------------------------------------------------- 4. orchestrator: daily lessons
-
-# Once a day, collect the Lesson: lines (at the start of a line) posted since the last collection. The orchestrator
-# folds them into agents/LESSONS.md in a PR labelled lessons, which the human merges. Skipped while one is open.
-today=$(date -u +%F)
-if [ "$(cat "$STATE/lessons-day" 2>/dev/null)" != "$today" ] && [ -z "$(prs_with lessons)" ] && ! cooling orchestrator; then
-  since=$(cat "$STATE/lessons-since" 2>/dev/null || date -u -d '1 day ago' +%FT%TZ)
-  lessons=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
-    --jq '.[] | select(.user.login == "'"$BOT"'") | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"')
-  if [ "$DRY_RUN" != 1 ]; then echo "$today" > "$STATE/lessons-day"; now > "$STATE/lessons-since"; fi
-  if [ -n "$lessons" ]; then
-    wake orchestrator lessons "Collect lessons. These Lesson: lines were posted since $since:
-$lessons"
-    exit 0
-  fi
-fi
-
 # ---------------------------------------------------------------- 5. orchestrator: the board
 
-# The board leaves out rate-limit issues (the dispatcher's, for the human) and issues waiting for the human's OK.
+# The board leaves out rate-limit issues (the dispatcher's, for the human), the pinned Lessons issue, and issues
+# waiting for approval.
 # When the human removes needs-approval, the issue shows up as new, and the orchestrator triages it.
 board() {
   gh issue list -R "$REPO" --state all --limit 300 --json number,state,labels \
-    --jq 'map(select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval")))
+    --jq 'map(select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval" and .name != "lessons")))
       | map({n: .number, s: .state, l: ([.labels[].name] | sort)}) | sort_by(.n)'
 }
 save_board() { [ "$DRY_RUN" = 1 ] || board > "$STATE/board.json"; }
@@ -705,6 +751,36 @@ for n in $(jq -r '.[] | select(.s == "CLOSED") | .n' <<<"$current"); do
     touch "$STATE/reported/$n"
     log "token report posted on #$n"
   fi
+done
+
+# 5a. A ticket from the agents' account waiting for approval: the orchestrator decides, once per ticket, and only while
+# today's approvals are under APPROVALS_PER_DAY (counted in approvals, one time per line). Otherwise the human decides.
+mkdir -p "$STATE/approval-asked"
+for n in $(jq -r '.[] | select(any(.labels[]; .name == "needs-approval")) | .number' <<<"$issues"); do
+  [ "$(cat "$STATE/gated/$n" 2>/dev/null)" = "needs-approval agent" ] && [ ! -e "$STATE/approval-asked/$n" ] || continue
+  used=$(awk -v t=$(( $(date +%s) - 86400 )) '$1 > t' "$STATE/approvals" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$used" -ge "$APPROVALS_PER_DAY" ]; then
+    act gh issue comment "$n" -R "$REPO" --body "Dispatcher: the orchestrator's $APPROVALS_PER_DAY approvals for today are used, so this ticket waits for the human.
+
+— dispatcher · no model" >/dev/null
+    [ "$DRY_RUN" = 1 ] || { touch "$STATE/approval-asked/$n"; echo "needs-approval human" > "$STATE/gated/$n"; }
+    log "approval of #$n left to the human: $used approvals in the last 24 h"
+    continue
+  fi
+  cooling orchestrator && break
+  [ "$DRY_RUN" = 1 ] || touch "$STATE/approval-asked/$n"
+  wake orchestrator "issue-$n" "Issue #$n was filed by an agent and waits for approval. Approve it or leave it for the human (your SOUL.md, \"Issue #N waits for approval\")."
+  if [ "$DRY_RUN" != 1 ]; then
+    if gh issue view "$n" -R "$REPO" --json labels --jq 'any(.labels[]; .name == "needs-approval")' | grep -q false; then
+      date +%s >> "$STATE/approvals"
+      echo "approved by the orchestrator" > "$STATE/gated/$n"
+      log "approved #$n by the orchestrator ($(( used + 1 )) of $APPROVALS_PER_DAY today)"
+    else
+      echo "needs-approval human" > "$STATE/gated/$n"
+      log "approval of #$n left to the human by the orchestrator"
+    fi
+  fi
+  exit 0
 done
 
 # An assign:orchestrator issue wakes it once. If the label is still there afterwards, only a board change wakes it again.

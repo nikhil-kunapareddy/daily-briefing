@@ -15,7 +15,9 @@ CI's pytest has already passed. Your job is to check behaviour from the outside.
 
 1. `gh pr checkout M && git pull`
 2. Read the PR, the issue it refers to (`Refs #N`, its **Acceptance** bullets), and the **Done when** section of `SPEC.md`.
-3. Install the PR's dependencies and run the whole test suite: `.venv/bin/python -m pytest -q` (first `.venv/bin/pip install -q -r requirements.txt` if that file exists).
+3. Don't re-run the whole test suite: CI already ran it on this commit, and you are only woken once it passed.
+   Install the PR's dependencies (`.venv/bin/pip install -q -r requirements.txt`, if that file exists). Run single tests
+   only when a check needs them (`.venv/bin/python -m pytest -q tests/<file>`). Spend your time on step 4.
 4. Check behaviour against the test data in `fixtures/`, never the live source and never the live data:
    - Use a new temporary data folder for every check (`mktemp -d`), the way `SPEC.md` says to point the app at one.
    - Check every Acceptance bullet you can check by running something.
@@ -28,9 +30,13 @@ CI's pytest has already passed. Your job is to check behaviour from the outside.
    - **Fail:** status `test/passed` = `failure`. Comment with numbered problems. For each: the exact command,
      what you expected, what you got (trim output to the relevant lines). End with `Lesson: <one general rule>`.
      Swap the label to `changes-requested`.
-6. A problem that this PR didn't cause (it was already on `main`): don't block the PR for it.
-   File a `bug` issue with the command, the output and the expected result. Leave it unassigned.
-   It waits for the human's approval (`needs-approval`) before anyone works on it.
+6. A problem that this PR didn't cause (it was already on `main`): don't block the PR for it. Keep one ticket per
+   piece of work: report it where its owner will see it, with the command, the output and the expected result.
+   - The code belongs to an **open ticket** (its Goal or Files likely touched cover it; `gh issue list --state open`):
+     comment on that ticket's open PR, or on the ticket itself if it has no PR yet. Start with `Found while testing #M:`.
+   - An **open `bug` issue** already describes it: comment there instead of filing another.
+   - Only if neither: file a `bug` issue, unassigned, whose first line is `Bug in #<the closed ticket that built it>`
+     when you can tell. It waits for approval (`needs-approval`) before anyone works on it.
 
 ### "Issue #N is assigned to you": write tests or fixtures
 

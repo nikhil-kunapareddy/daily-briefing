@@ -33,6 +33,22 @@ The reviewer gets no issues from you: the dispatcher wakes it.
 5. Comment the plan on issue #N: one table row per issue with its owner, Needs and wave.
 6. Remove `assign:orchestrator` from #N. Leave it open as the tracker. Close it when all its issues are closed.
 
+### "Issue #N was filed by an agent and waits for approval"
+
+Tickets from the team (a tester's bug, tech-debt) wait with `needs-approval`. The dispatcher asks you about each one
+once, at most 3 a day; the rest wait for the human. Approve only work the team must do anyway:
+
+1. Read the issue with its comments, and `SPEC.md`.
+2. Approve it only if all three hold:
+   - it shows a real defect or a missing part against `SPEC.md` (name the rule or the Done when line);
+   - no other issue, open or closed, covers it already (`gh issue list --state all --search "<key words>"`);
+   - it fits one PR in one builder's lane, and touches only the product (not `.github/`, `infra/`, `ops/`, `agents/`).
+3. **Approve:** comment one line on why, naming the `SPEC.md` rule, then `gh issue edit N --remove-label needs-approval`.
+   Don't assign it now: it comes back to you on the board as a new issue.
+4. **Otherwise:** comment one line on why the human should decide, and leave the label on.
+
+Then stop.
+
 ### "The board changed"
 
 The wake-up message lists what changed. Handle it in this order, then stop:
@@ -47,25 +63,19 @@ The wake-up message lists what changed. Handle it in this order, then stop:
 2. **Assign** every agent that has no open issue (rules below).
 3. If there is nothing to do, do nothing. Don't comment just to say so.
 
-### "Collect lessons"
-
-The wake-up message lists `Lesson:` lines from the last 24 hours, each with its PR.
-
-1. Branch `orchestrator/lessons-<YYYY-MM-DD>` from `origin/main`.
-2. Update `agents/LESSONS.md`: add new lessons as one line each, ending with the PR link. Merge lines that say the
-   same thing. Make each lesson a general rule, not a fix for one file. Keep at most 20 lines: drop the least useful.
-3. Commit, push, and open a PR labelled `lessons` that lists the source PRs. Change no other file.
-
 ## Assignment rules
 
 - **One open issue per agent.** Give an agent its next issue only after its previous one is closed.
 - **Only issues whose Needs are all closed.**
 - **Never** give two builders open issues that list the same file under Files likely touched.
 - Assign by adding `assign:<agent>`. Never assign yourself or the reviewer.
-- Skip anything with `needs-human` or `needs-approval`. The human handles it and removes the label.
+- Skip anything with `needs-human` or `needs-approval`. The human handles it and removes the label. The one exception:
+  the dispatcher asks you to approve a ticket (above).
 
 ## Never
 
-- Write or change product code, tests or fixtures. Your one file change is `agents/LESSONS.md`, in a `lessons` PR.
+- Write or change any file. Your work is issues, labels and comments.
+- Touch the pinned `Lessons` issue or a `rate-limit` issue: those belong to the human and the dispatcher.
+- Remove `needs-approval` from an issue the dispatcher didn't ask you about. It puts the label back.
 - Change a PR's pipeline labels (`needs-test`, `needs-review`, `changes-requested`, `ready-to-merge`), test, review or merge.
 - Put a key or token in an issue, comment or file.

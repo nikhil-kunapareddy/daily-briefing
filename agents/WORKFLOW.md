@@ -15,7 +15,7 @@ show what happens in every agent run, and how lessons spread.
 flowchart TD
   T["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you, an agent, or anyone"]
   G{{"<b>2 · Traces back to you?</b> · dispatcher<br/>filed by you, or the orchestrator's split of yours"}}
-  A(["Waits for your OK<br/>label needs-approval"])
+  A(["Waits for approval<br/>label needs-approval"])
   O{{"<b>3 · Triage</b> · orchestrator<br/>one PR's worth of work?"}}
   X(["Closed with a reason"])
   B["<b>4 · Build</b> · builder<br/>branch from main · PR says Refs #N<br/>label needs-test"]
@@ -32,7 +32,7 @@ flowchart TD
   T --> G
   G -->|"yes"| O
   G -->|"no"| A
-  A -.->|"you remove the label"| O
+  A -.->|"approved: orchestrator (3 a day, agents' tickets) or you"| O
   O -->|"yes · assigned"| B
   O -->|"duplicate · not worth it"| X
   O -.->|"too big: split, once"| T
@@ -46,7 +46,7 @@ flowchart TD
   C -.->|"no"| SB
   TE -.->|"no"| SB
   R -.->|"no"| SB
-  TE -.->|"other bug: new ticket"| T
+  TE -.->|"bug no open ticket covers: new ticket"| T
   SB -.->|"1st and 2nd: fix it"| B
   SB -->|"3rd by one check"| H
   H -.->|"you remove the label: counts reset"| B
@@ -56,7 +56,7 @@ flowchart TD
   subgraph RUN["Every agent run · the dispatcher, plain code"]
     direction TB
     K["Wakes one agent for the next step<br/>the moment the last run ends<br/>(cron every 2 min: CI results, your merges)"]
-    P["Wake-up message: task · rules · signature<br/>LESSONS.md + new lessons"]
+    P["Wake-up message: task · rules · signature<br/>kept lessons + new ones"]
     MO{{"Main model answers?"}}
     BK{{"1st, then 2nd backup answers?"}}
     DN(["Run done: labels, commits, comments"])
@@ -76,11 +76,12 @@ flowchart TD
   subgraph LES["Lessons"]
     direction TB
     L1["Every send-back ends with a Lesson: line"]
+    L3["Added at once to the pinned<br/>Lessons issue, unticked"]
     L2["In every agent's next wake-up<br/>marked not reviewed"]
-    L3["Daily: the orchestrator folds them<br/>into LESSONS.md · a lessons PR"]
-    L4["You merge it: kept for good"]
-    L1 --> L2
-    L1 --> L3 --> L4
+    L4["You tick it to keep it<br/>or delete it to drop it: no PR"]
+    L1 --> L3
+    L3 --> L2
+    L3 --> L4
   end
   D ~~~ RUN
   D ~~~ LES
@@ -102,8 +103,9 @@ flowchart TD
 1. **GitHub ticket.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
    `change-request`. The tester files `bug` tickets. Any agent may file `tech-debt`. Only the orchestrator assigns.
 2. **Traces back to you?** Plain check by the dispatcher: a ticket the human filed, or the orchestrator's split of one
-   (`Part of #N`), is work. Anything else, from an agent or a stranger, gets `needs-approval` and waits until the human
-   removes the label (rule 2).
+   (`Part of #N`), is work. Anything else gets `needs-approval` (rule 2). A ticket from the agents' account goes to the
+   orchestrator, which may approve it if it fits `SPEC.md`, at most 3 a day; the rest, and every stranger's ticket,
+   wait for the human.
 3. **Triage** by the orchestrator. It splits a big ticket into tickets that each fit one PR (once: never a split of a
    split), and closes duplicates and ones not worth doing, with a reason. Every ticket gets Part of, Goal, Acceptance,
    Needs and Files likely touched. It adds `assign:<builder>` once the ticket's Needs are closed and that builder is free.
@@ -111,8 +113,10 @@ flowchart TD
    then a PR that starts `Refs #<issue>`, labelled `needs-test`.
 5. **CI** runs pytest on the PR. If it's red, the dispatcher re-runs it once (in case it was a flake),
    then sends the PR back with no model call.
-6. **Test** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
-   Fail: label `changes-requested`, with evidence and a `Lesson:` line.
+6. **Test** by the tester, against fixtures (CI already ran the whole suite). Pass: status `test/passed`, label
+   `needs-review`. Fail: label `changes-requested`, with evidence and a `Lesson:` line. A bug this PR didn't cause goes
+   to the open ticket (or open bug) that owns that code, as a comment; a new ticket only when none does.
+   One ticket per piece of work: every failure on it (CI, test, review, works in main) stays on that ticket.
 7. **Review** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
    Reject: label `changes-requested`, with the reason and a `Lesson:` line.
 8. **In step with main?** Plain check by the dispatcher, at every step: a PR that conflicts with `main` goes back to
@@ -136,7 +140,7 @@ agent the next step needs ("Who wakes when", below).
 
 | Agent | Runtime | Model (family) | Job |
 |---|---|---|---|
-| orchestrator | Hermes | `nemotron-3-ultra` (NVIDIA) | Splits `SPEC.md` into issues, assigns them, triages bugs, re-queues stuck work, curates `LESSONS.md` |
+| orchestrator | Hermes | `nemotron-3-ultra` (NVIDIA) | Splits `SPEC.md` into issues, assigns them, triages bugs, re-queues stuck work |
 | builder-ingest | OpenClaw | `gpt-oss:120b` (OpenAI) | Data side: schema, fetching, saving runs, finding new items, the job command |
 | builder-web | OpenClaw | `gpt-oss:120b` (OpenAI) | Web side: public page, Run now, rate limit, health endpoint |
 | builder-ops | OpenClaw | `gpt-oss:120b` (OpenAI) | Running it on the VM: install script, the web app's service, the schedule |
@@ -185,8 +189,9 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `assign:<agent>` | This agent owns the issue | Orchestrator only |
 | `bug`, `incident`, `tech-debt`, `change-request` | Kind of issue | Whoever files it |
 | `needs-human` | Stuck. Waits for the human, who removes it to release the issue | Any agent, or the dispatcher |
-| `needs-approval` | Not filed by the human or split from their ticket. Nobody works on it until the human removes the label | Dispatcher only |
+| `needs-approval` | Not filed by the human or split from their ticket. Nobody works on it until it is approved (rule 2) | Dispatcher only |
 | `rate-limit` | An agent can't reach any of its models. Not work: agents leave these issues alone | Dispatcher only |
+| `lessons` | The pinned `Lessons` issue. Not work: only the human edits it | Setup (`ops/github-setup.sh`) |
 
 **Pull requests.** A PR has exactly one of the first four at a time. Whoever adds one removes the previous one.
 
@@ -197,7 +202,6 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `changes-requested` | Sent back to the builder | Tester, reviewer, or the dispatcher (red CI) |
 | `ready-to-merge` | Approved. Waiting for the human | Reviewer |
 | `needs-human` | Sent back too often, or an agent is stuck. The human removes it to release the PR | Any agent, or the dispatcher |
-| `lessons` | Orchestrator's `LESSONS.md` update. Skips the tester and reviewer; the human reviews it | Orchestrator |
 
 ## Conventions
 
@@ -212,7 +216,6 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 - **Commit statuses** on the PR's latest commit: `test/passed` (tester) and `review/approved` (reviewer).
   A new push clears both, so every fix is tested and reviewed again. `main` only accepts a PR with both, plus green CI, merged by the human.
   A tester's own PR can't be tested by the tester: the dispatcher sets its `test/passed` to "not self-tested" and sends it to the reviewer.
-  A `lessons` PR only changes `agents/LESSONS.md`; the human reviews and merges it without the agent gates.
 - **Issues from the orchestrator** start with `Part of #N` (the ticket it split), then four parts: Goal, Acceptance
   (checkable bullets), Needs (`#n` or none), Files likely touched.
 
@@ -221,8 +224,9 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 1. **GitHub is the only channel.** Agents never call each other. Everything is an issue, a PR, a label, a comment or a status.
 2. **Only the orchestrator assigns issues.** Other agents may file issues, but leave them unassigned.
    All work traces back to the human: a ticket the human filed, or the orchestrator's split of one (split once, never
-   a split of a split). Every other ticket, from an agent or a stranger, gets `needs-approval` from the dispatcher
-   and waits until the human removes the label.
+   a split of a split). Every other ticket gets `needs-approval` from the dispatcher. Approving means removing that
+   label: the orchestrator may do it for the agents' own tickets when the dispatcher asks, at most 3 a day; otherwise
+   only the human. If the agents' account removes it at any other time, the dispatcher puts it back.
 3. **Nobody checks their own work.** Builders never test, review or merge their own PRs. The tester and reviewer never change `app/`.
    The tester may write tests and fixtures in its own PRs; those skip the tester step and go straight to review.
 4. **Every send-back ends with one line:** `Lesson: <one general rule>`, for example `Lesson: compare stable arXiv IDs, never titles.`
@@ -232,7 +236,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
    (`changes-requested`, so the builder tries again, unless the human swapped it for `needs-test` or `needs-review`).
 6. **One open ticket per builder.** The orchestrator assigns a builder's next issue only after its previous PR is merged or closed,
    and never gives two builders issues that touch the same file at the same time.
-7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/`, `ops/` or `agents/` (the orchestrator's `LESSONS.md` PR is the one exception).
+7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/`, `ops/` or `agents/`.
    Never touch the live data in `/var/lib/daily-briefing/` or the live app on port 8000. Test servers use port 8100 or above.
 8. **Keys stay secret.** Never print, paste or commit a key or token.
 9. **Stuck or unsure:** comment on the issue or PR with what you tried and what you need, then add `needs-human`. Don't guess.
@@ -252,7 +256,8 @@ Cron also starts it every 2 minutes, for what no agent does: CI finishing, and t
 3. **builder:** its oldest PR with `changes-requested`, otherwise its oldest `assign:<builder>` issue that has no open PR.
    An issue whose PR merged waits for the works-in-main check (step 10), unless the check failed: then it goes back to its builder.
    The tester is woken the same way for its own test-writing issues.
-4. **orchestrator:** once a day, new `Lesson:` lines (see LESSONS.md below). Otherwise an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
+4. **orchestrator:** a ticket from an agent waiting for approval (each once, at most 3 approvals a day), then an issue
+   with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
    (a new or relabelled issue, a merged or closed PR).
 
 Anything with `needs-human` is skipped. When nothing is waiting, no agent runs and no tokens are spent.
@@ -283,16 +288,14 @@ The repo is `nikhil-kunapareddy/daily-briefing`. `gh` is already signed in.
 | File an issue | `gh issue create --title "…" --body-file issue.md --label bug` |
 | Commit | `git commit -m "…" --trailer "Agent: <your name>" --trailer "Model: <your model>"` |
 
-## LESSONS.md
+## Lessons
 
-What the team has learned from rejections, so the same mistake isn't made twice.
+What the team has learned from send-backs, so the same mistake isn't made twice. No PR, no merge, no model.
 
 1. The tester and reviewer end every send-back with a `Lesson:` line (rule 4).
-2. Once a day, the dispatcher collects the `Lesson:` lines (at the start of a line) posted since its last collection,
-   and wakes the orchestrator with them. It skips this while a `lessons` PR is still open.
-3. The orchestrator merges them into `agents/LESSONS.md`: no duplicates, at most 20 lines, each with a link to its PR.
-   It opens a PR labelled `lessons`.
-4. The human merges it. Only merged lessons stay in the file.
-5. The dispatcher puts `LESSONS.md` into every agent's wake-up message. Lessons posted since the last merge come with it
-   at once, marked "not reviewed yet" (the newest 10), so the next agent learns them before the daily collection.
-   Follow one of those only where it fits your task.
+2. The dispatcher adds each new one at once to the pinned GitHub issue `Lessons` (#7), as an unticked checklist item
+   with a link to its comment. Only lines the agents' account posted count.
+3. The human ticks a lesson to keep it, or deletes its line to drop it. Only the human edits the list: the dispatcher
+   undoes any other edit by the agents' account.
+4. Every agent's wake-up message carries the ticked lessons (the newest 20) and the newest 10 unticked ones, marked
+   "not reviewed yet". Follow one of those only where it fits your task.

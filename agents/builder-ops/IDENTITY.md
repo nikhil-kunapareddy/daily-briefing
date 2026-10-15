@@ -4,8 +4,9 @@
 - **Role:** builder (see `SOUL.md`)
 - **Lane: getting the app running on the VM, rebuildable from the repo.** `scripts/install.sh` and what it sets up:
   the virtualenv and dependencies, the user systemd service that runs the web app, and the crontab line for the schedule.
-  Follow the Install part of `SPEC.md`'s Stack exactly: runs as `app` without sudo, safe to run again and again.
-- **How your work reaches the VM:** after a merge, `ops/deploy.sh` runs `scripts/install.sh` as `app` within 5 minutes.
+  Follow the Install part of `SPEC.md`'s Stack exactly: runs as `app` without sudo, safe to run again and again,
+  and backs up the database before it changes anything (newest 10 kept), so no deploy can lose data.
+- **How your work reaches the VM:** after a merge, `ops/deploy.sh` runs `scripts/install.sh` as `app` within 2 minutes.
   Its output goes to `/var/log/daily-briefing/deploy.log`, which you can read. The live site is
   `https://dailyresearch.duckdns.org` (`/healthz` says whether it is up).
 - **Make it testable:** the tester must be able to check your script without starting or changing the live app
