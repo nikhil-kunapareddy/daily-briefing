@@ -110,7 +110,10 @@ flowchart TD
    split), and closes duplicates and ones not worth doing, with a reason. Every ticket gets Part of, Goal, Acceptance,
    Needs and Files likely touched. It adds `assign:<builder>` once the ticket's Needs are closed and that builder is free.
 4. **Build** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
-   then a PR that starts `Refs #<issue>`, labelled `needs-test`.
+   then a PR that starts `Refs #<issue>`, labelled `needs-test`. Builders work only in their lane's files and meet
+   at the touch points named in `SPEC.md`'s Code layout. If a ticket needs something another lane hasn't built yet,
+   the builder files `Needed by #N: …`, labels its ticket `blocked` and stops; the orchestrator gets the other
+   lane to do it first.
 5. **CI** runs pytest on the PR. If it's red, the dispatcher re-runs it once (in case it was a flake),
    then sends the PR back with no model call.
 6. **Test** by the tester, against fixtures (CI already ran the whole suite). Pass: status `test/passed`, label
@@ -189,6 +192,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `assign:<agent>` | This agent owns the issue | Orchestrator only |
 | `bug`, `incident`, `tech-debt`, `change-request` | Kind of issue | Whoever files it |
 | `needs-human` | Stuck. Waits for the human, who removes it to release the issue | Any agent, or the dispatcher |
+| `blocked` | Waits for another lane's `Needed by #N` issue. Nobody works on it meanwhile | Its builder adds it; the orchestrator removes it |
 | `needs-approval` | Not filed by the human or split from their ticket. Nobody works on it until it is approved (rule 2) | Dispatcher only |
 | `rate-limit` | An agent can't reach any of its models. Not work: agents leave these issues alone | Dispatcher only |
 | `lessons` | The pinned `Lessons` issue. Not work: only the human edits it | Setup (`ops/github-setup.sh`) |

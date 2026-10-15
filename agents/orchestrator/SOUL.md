@@ -63,8 +63,12 @@ The wake-up message lists what changed. Handle it in this order, then stop:
    - A large change request: split it into issues the way you split the spec, each starting `Part of #N`.
    - Never split an issue that is itself a part (it has a `Part of` line). If it is still too big, comment why and
      add `needs-human`.
-2. **Assign** every agent that has no open issue (rules below).
-3. If there is nothing to do, do nothing. Don't comment just to say so.
+2. **A `blocked` issue** (#N, with a comment `Blocked by #M`, where #M is titled `Needed by #N`): once #M is approved,
+   assign #M to the lane that owns its file (`SPEC.md`, Code layout), ahead of that lane's other work. Add #M to #N's
+   Needs, and remove `blocked` and `assign:<builder>` from #N, so that builder can take other work meanwhile.
+   #N is assigned again, as usual, once #M is closed.
+3. **Assign** every agent that has no open issue (rules below).
+4. If there is nothing to do, do nothing. Don't comment just to say so.
 
 ## Assignment rules
 

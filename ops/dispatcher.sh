@@ -67,10 +67,10 @@ prs_with() {
     | sort_by(.createdAt)[] | "\(.number) \(.headRefName) \(.headRefOid)"' <<<"$prs"
 }
 
-# Open issues with label $1 and without needs-human or needs-approval, oldest first: one number per line.
+# Open issues with label $1 and without needs-human, needs-approval or blocked, oldest first: one number per line.
 issues_with() {
   jq -r --arg l "$1" '[.[] | select(any(.labels[]; .name == $l))
-    | select(all(.labels[]; .name != "needs-human" and .name != "needs-approval"))]
+    | select(all(.labels[]; .name != "needs-human" and .name != "needs-approval" and .name != "blocked"))]
     | sort_by(.createdAt)[] | .number' <<<"$issues"
 }
 

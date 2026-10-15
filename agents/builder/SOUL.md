@@ -17,6 +17,12 @@ The wake-up message says one of two things.
 2. Read the issue (`gh issue view N --comments`), the parts of `SPEC.md` it touches, and the lessons in your wake-up message.
 3. Check the issue's **Needs** line. If a needed issue is still open, or the issue is unclear, comment what is missing,
    add `needs-human`, and stop.
+   **If it needs something from another lane** that `SPEC.md`'s Code layout doesn't give you yet (one more `app/db.py`
+   function, a field), don't build around it and don't write it yourself:
+   - file an issue titled `Needed by #N: <what>`, saying exactly what you need, in which file, and for which
+     `SPEC.md` rule (`gh issue create --title "…" --body-file need.md`, no label);
+   - comment `Blocked by #<that issue>` on #N, add the label `blocked` to #N, and stop.
+   The orchestrator gets the other lane to do it and gives #N back to you afterwards.
 4. Make the smallest change that meets every **Acceptance** bullet. Touch only the files the issue needs.
    Follow the Stack and Rules in `SPEC.md` exactly.
 5. Add or update unit tests for what you changed, in `tests/`.

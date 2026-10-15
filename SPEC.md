@@ -236,7 +236,13 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
   transaction. It returns the new run's id, or how many minutes to wait. Then the web side starts
   `python -m app.job --run-id <id>` in its own process (rule 27). The schedule runs `python -m app.job`.
 - gunicorn serves `app.web:create_app()` on `127.0.0.1:8000`.
+- The job writes **only** through these functions in `app/db.py`: `start_run(trigger)` (returns the run's id),
+  `save_check(run_id, date, result, total_results, papers)`, `save_summary(stable_id, text, source)` and
+  `finish_run(run_id, error=None)`. Tests in any lane put data in a test database **only** through these same
+  functions, never with SQL of their own; `app/db.py`'s own tests are the one exception.
 - Settings come from `app/config.py` only.
+- These names, their arguments and what they return don't change unless this spec changes. A lane that needs one
+  more asks for it (WORKFLOW.md, "Needed by").
 
 **A sensible order** (the orchestrator decides; Needs go by this):
 1. builder-ingest: `config`, `db` with the schema and the read functions, `requirements.txt`.
@@ -244,6 +250,8 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
 3. builder-ingest: `arxiv` and `job`, with open dates (needs 1). builder-web: the page, day navigation, history and
    `/runs` (needs 1).
 4. builder-ingest: `summaries` (needs 3). builder-web: Run now, its rate limit, and `/healthz` (needs 3).
+5. tester: behaviour tests across the lanes, on the fixture: the job, then the page and `/?date=`, Run now and its
+   rate limit, `/runs`, and the day arrows (needs 3 and 4). This is where the pieces are tested together.
 
 ## Done when
 

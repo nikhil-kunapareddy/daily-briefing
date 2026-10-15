@@ -23,6 +23,7 @@ label bug               d73a4a "Something is broken"
 label incident          b60205 "The live app or its schedule is failing"
 label tech-debt         cfd3d7 "Worth fixing later; not a bug"
 label change-request    a2eeef "A change asked for by the human"
+label blocked         e4e669 "Waits for another lane's 'Needed by' issue. Set by its builder, cleared by the orchestrator"
 label needs-approval    fbca04 "Filed by an agent or a stranger; waits for the human's OK"
 label rate-limit        b60205 "An agent can't reach any of its models. Filed and closed by the dispatcher"
 
