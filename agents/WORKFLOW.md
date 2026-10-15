@@ -27,6 +27,7 @@ flowchart TD
   O -.->|"too big: split, once"| T
   B --> C
   B -->|"3rd send-back by one check"| H
+  H -.->|"you remove the label: counts reset"| B
   C -->|"yes"| TE
   C -.->|"no"| B
   TE -->|"yes · test/passed"| R
@@ -109,7 +110,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 |---|---|---|
 | `assign:<agent>` | This agent owns the issue | Orchestrator only |
 | `bug`, `incident`, `tech-debt`, `change-request` | Kind of issue | Whoever files it |
-| `needs-human` | Stuck. Waits for the human | Any agent, or the dispatcher |
+| `needs-human` | Stuck. Waits for the human, who removes it to release the issue | Any agent, or the dispatcher |
 | `needs-approval` | Not filed by the human or split from their ticket. Nobody works on it until the human removes the label | Dispatcher only |
 | `rate-limit` | An agent can't reach any of its models. Not work: agents leave these issues alone | Dispatcher only |
 
@@ -121,7 +122,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `needs-review` | Tested. Waiting for the reviewer | Tester |
 | `changes-requested` | Sent back to the builder | Tester, reviewer, or the dispatcher (red CI) |
 | `ready-to-merge` | Approved. Waiting for the human | Reviewer |
-| `needs-human` | Sent back too often, or an agent is stuck | Any agent, or the dispatcher |
+| `needs-human` | Sent back too often, or an agent is stuck. The human removes it to release the PR | Any agent, or the dispatcher |
 | `lessons` | Orchestrator's `LESSONS.md` update. Skips the tester and reviewer; the human reviews it | Orchestrator |
 
 ## Conventions
@@ -151,13 +152,17 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
    The tester may write tests and fixtures in its own PRs; those skip the tester step and go straight to review.
 4. **Every send-back ends with one line:** `Lesson: <one general rule>`, for example `Lesson: compare stable arXiv IDs, never titles.`
 5. **Each check can send a PR back twice.** CI, test and review are counted separately. The third send-back by the
-   same check gives the PR `needs-human`, and it waits for the human.
+   same check gives the PR `needs-human`, and it waits for the human. The human releases it by removing the label,
+   usually after a comment: all its counts start again from zero, and it re-enters at its pipeline label
+   (`changes-requested`, so the builder tries again, unless the human swapped it for `needs-test` or `needs-review`).
 6. **One open ticket per builder.** The orchestrator assigns a builder's next issue only after its previous PR is merged or closed,
    and never gives two builders issues that touch the same file at the same time.
 7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/`, `ops/` or `agents/` (the orchestrator's `LESSONS.md` PR is the one exception).
    Never touch the live data in `/var/lib/daily-briefing/` or the live app on port 8000. Test servers use port 8100 or above.
 8. **Keys stay secret.** Never print, paste or commit a key or token.
 9. **Stuck or unsure:** comment on the issue or PR with what you tried and what you need, then add `needs-human`. Don't guess.
+   **The human's word comes first:** a comment from the human (the repo owner, not signed by an agent) overrules
+   any agent's comment on that issue or PR.
 10. **Use your tools; never pretend.** Run every command with your tool. Never write a command or a tool call as text in your
     reply. Only report output a tool gave you, and quote it. The dispatcher counts a run with no tool calls as a failed run.
 

@@ -412,7 +412,46 @@ recovered() {
   log "recovered $1, closed #${issue:-?}"
 }
 
-# ---------------------------------------------------------------- 0. tickets the human didn't ask for
+# ---------------------------------------------------------------- 0. released by the human
+
+# needs-human's exit: the human removes the label, after a comment, a ticket edit or a decision. The dispatcher sees it
+# go (it keeps the list of held items in held) and gives the item a fresh start: its send-back and failed-run counts are
+# reset. A PR re-enters where its pipeline label says. The human may swap that label first: changes-requested (default:
+# the builder tries again, reading the human's comment), needs-test or needs-review (test or review it again).
+# A PR left with no pipeline label goes back to its builder.
+held_now=$(jq -rn --argjson p "$prs" --argjson i "$issues" '
+  ($p[] | select(any(.labels[]; .name == "needs-human")) | "pr-\(.number)"),
+  ($i[] | select(any(.labels[]; .name == "needs-human")) | "issue-\(.number)")')
+released=0 rlabel=""
+if [ -e "$STATE/held" ]; then
+  for key in $(comm -23 <(sort -u "$STATE/held") <(sort -u <<<"$held_now")); do
+    n=${key#*-}
+    case $key in                                 # closed or merged while held: nothing to release
+      pr-*) jq -e --argjson n "$n" 'any(.[]; .number == $n)' <<<"$prs" >/dev/null || continue ;;
+      issue-*) jq -e --argjson n "$n" 'any(.[]; .number == $n)' <<<"$issues" >/dev/null || continue ;;
+    esac
+    if [ "$DRY_RUN" != 1 ]; then
+      rm -f "$STATE"/fails/*-"$key"
+      [ "$key" = "pr-$n" ] && [ -e "$SENDBACKS/$key" ] && mv "$SENDBACKS/$key" "$SENDBACKS/$key.before-$(date -u +%Y%m%dT%H%M%SZ)"
+    fi
+    if [ "$key" = "pr-$n" ]; then
+      rlabel=$(jq -r --argjson n "$n" '.[] | select(.number == $n) | [.labels[].name
+        | select(IN("needs-test", "needs-review", "changes-requested", "ready-to-merge"))] | first // ""' <<<"$prs")
+      if [ -z "$rlabel" ]; then
+        act gh pr edit "$n" -R "$REPO" --add-label changes-requested >/dev/null
+        rlabel=changes-requested
+      fi
+      comment "$n" "Dispatcher: released by the human. Send-back and failed-run counts are reset, and the PR re-enters at \`$rlabel\`."
+    fi
+    log "released $key by the human: counts reset${rlabel:+, re-enters at $rlabel}"
+    rlabel=""
+    released=1
+  done
+fi
+[ "$DRY_RUN" = 1 ] || printf '%s\n' "$held_now" > "$STATE/held"
+[ "$released" = 0 ] || load_prs
+
+# ---------------------------------------------------------------- 0a. tickets the human didn't ask for
 
 # Work must trace back to the human, so agents can't create work for each other without end.
 # Work is a ticket the human (the repo owner) filed, or a split of one: a ticket by the agents' account with a line
@@ -514,7 +553,7 @@ while read -r n branch sha; do
   [[ " ${BUILDERS[*]} " == *" $owner "* ]] || { log "skip pr-$n: branch $branch has no builder prefix"; continue; }
   over=$(over_budget "$n")
   if [ -n "$over" ]; then
-    relabel "$n" needs-human changes-requested
+    act gh pr edit "$n" -R "$REPO" --add-label needs-human >/dev/null   # keeps changes-requested: where it re-enters
     comment "$n" "Dispatcher: sent back a third time by the same check ($over). Over to the human (WORKFLOW.md rule 5). Send-backs so far: $(sendback_counts "$n")."
     log "needs-human pr-$n: third send-back by $over ($(sendback_counts "$n"))"
     continue
