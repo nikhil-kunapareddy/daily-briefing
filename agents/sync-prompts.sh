@@ -36,8 +36,9 @@ sync_one() {
       put "$WORK/$agent/IDENTITY.md" "$A/$agent/IDENTITY.md" ;;
     tester)
       mkdir -p "$WORK/$agent"
-      put "$WORK/$agent/AGENTS.md" "$A/WORKFLOW.md"
-      put "$WORK/$agent/SOUL.md"   "$A/tester/SOUL.md" ;;
+      put "$WORK/$agent/AGENTS.md"   "$A/WORKFLOW.md"
+      put "$WORK/$agent/SOUL.md"     "$A/tester/SOUL.md"
+      put "$WORK/$agent/IDENTITY.md" "$A/tester/IDENTITY.md" ;;
     orchestrator|reviewer)
       [ -d "$PROFILES/$agent" ] || { echo "no Hermes profile: $agent (run agents/setup.sh)" >&2; return 1; }
       put "$PROFILES/$agent/SOUL.md" "$A/$agent/SOUL.md" "$A/WORKFLOW.md" ;;
