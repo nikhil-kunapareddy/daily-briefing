@@ -129,10 +129,25 @@ wake() {
     rc=3
     log "no progress: $agent left $key unchanged"
   fi
+  # A failed run that ended on a rate limit, after the runtime tried every model in the agent's chain.
+  if [ "$rc" -ne 0 ] && [ -n "$(rate_limit_error "$agent" "$out")" ]; then
+    rc=5
+    log "rate-limited: $agent on $key, on all its models"
+  fi
   log "done $agent $key exit=$rc secs=$secs $(jq -r '"model=\(.model // "?") in=\(.input // "?") out=\(.output // "?")"' <<<"$usage")"
   jq -c --arg t "$(now)" --arg a "$agent" --arg k "$key" --arg r "${RUNTIME[$agent]}" --argjson rc "$rc" --argjson s "$secs" \
     --arg task "$task" '{time: $t, agent: $a, runtime: $r, key: $k, exit: $rc, secs: $s} + . + {task: $task}' \
     <<<"$usage" >> "$STATE/runs.jsonl"
+
+  # Rate-limited: not the item's fault, so no failure is counted and it keeps its labels. The agent cools down.
+  # Any other run in which a model wrote something ends the agent's cooldown.
+  if [ "$rc" -eq 5 ]; then
+    cool_down "$agent" "$key" "$out"
+    return 0
+  fi
+  if [ "$(jq -r '.output // 0' <<<"$usage")" -gt 0 ]; then
+    recovered "$agent" "$(jq -r --arg m "$model" '.model // $m' <<<"$usage")"
+  fi
 
   # Two failed runs in a row on the same item: stop retrying and hand it to the human.
   if [ "$rc" -eq 0 ]; then
@@ -236,10 +251,98 @@ run_usage() {
   esac 2>/dev/null || echo '{}'
 }
 
+# ---------------------------------------------------------------- rate limits
+
+# A rate-limited agent is skipped for 15 min, then 30, 60, at most 120, while the other agents keep working.
+# The first time, the dispatcher files one rate-limit issue for the human. It closes when the agent runs again.
+mkdir -p "$STATE/cooldown"                     # cooldown/<agent>: "<until, epoch s> <times in a row> <issue>"
+RATE_LIMIT='\b429\b|too many requests|rate.?limit|resource.?exhausted|quota|usage limit|limit (reached|exhausted|exceeded)|throttl'
+declare -A SKIPPED=()
+
+# rate_limit_error <agent> <output file>: the error the run ended on, if it is a rate limit; nothing otherwise.
+# Only the runtime's own error is read, never tool output: the app has a rate limit, and its code and tests say so.
+rate_limit_error() {
+  local err=${2%.out}.err line=""
+  case ${RUNTIME[$1]} in
+    openclaw)  # one log line per model attempt; the last one is how the run ended
+      line=$(grep -hE 'All models failed|embedded run agent end:' "$err" 2>/dev/null | tail -1)
+      grep -qE 'isError=true|All models failed' <<<"$line" || line="" ;;
+    hermes)    # the result record's error; stderr only when the run died before writing one
+      if grep -q '"type": *"result"' "$2" 2>/dev/null; then
+        line=$(jq -rR 'fromjson? | select(.type == "result" and .exit_code != 0) | .error // empty' "$2" 2>/dev/null | tail -1)
+      else
+        line=$(grep -iE "$RATE_LIMIT" "$err" 2>/dev/null | tail -1)
+      fi ;;
+  esac
+  grep -iqE "$RATE_LIMIT" <<<"$line" || return 0
+  sed -E 's/[A-Za-z0-9_-]{32,}/…/g' <<<"$line" | cut -c1-300   # no long IDs or anything key-like in the issue
+}
+
+# cooling <agent>: true while the agent is cooling down. Logs the skip once per dispatcher run.
+cooling() {
+  local until
+  read -r until _ 2>/dev/null < "$STATE/cooldown/$1" || return 1
+  [ "$(date +%s)" -lt "$until" ] || return 1
+  [ -n "${SKIPPED[$1]:-}" ] || log "skip $1: rate-limited, next try $(date -u -d "@$until" +%H:%MZ)"
+  SKIPPED[$1]=1
+}
+
+# cool_down <agent> <key> <output file>: after a rate-limited run. Files the rate-limit issue, or comments on it.
+cool_down() {
+  local agent=$1 key=$2 out=$3 f=$STATE/cooldown/$1 times=0 issue="" mins until body
+  read -r _ times issue 2>/dev/null < "$f" || true
+  times=$(( ${times:-0} + 1 ))
+  mins=$(( times >= 4 ? 120 : 15 << (times - 1) ))   # 15, 30, 60, then 120
+  until=$(( $(date +%s) + mins * 60 ))
+  body=$STATE/runs/$(date -u +%Y%m%dT%H%M%SZ)-$agent-rate-limit.md
+  if [ -z "$issue" ]; then
+    cat > "$body" <<EOF
+**$agent can't reach any of its models: they are all rate-limited.**
+
+- **When:** $(now), working on $key. That item keeps its labels and waits; no failure is counted.
+- **Models:** its main model and both backups (WORKFLOW.md, Team). The runtime moves down that list before it gives up.
+- **Last error:** \`$(rate_limit_error "$agent" "$out")\`
+
+**What the dispatcher does:** it skips $agent until $(date -u -d "@$until" +%H:%M) UTC, then tries again,
+waiting 15, 30, 60, then 120 minutes between tries. The other agents keep working. This issue closes by itself
+when $agent runs again.
+
+**What you can do:** wait, check the provider's usage page, or give $agent another model
+(\`agents/openclaw/openclaw.json5\` or \`agents/hermes/$agent.json\`, then \`agents/setup.sh\`).
+
+— dispatcher · no model
+EOF
+    issue=$(gh issue create -R "$REPO" --title "Rate limit: $agent can't reach any of its models" \
+      --label rate-limit --label needs-human --body-file "$body" 2>/dev/null) || true
+    issue=${issue##*/}
+  else
+    printf '%s\n\n— dispatcher · no model\n' "Still rate-limited at $(now), on $key: \`$(rate_limit_error "$agent" "$out")\`. \
+Next try at $(date -u -d "@$until" +%H:%M) UTC." > "$body"
+    gh issue comment "$issue" -R "$REPO" --body-file "$body" >/dev/null 2>&1 || true
+  fi
+  echo "$until $times $issue" > "$f"
+  log "cooldown $agent: $mins min (rate-limited $times time(s) in a row), issue #${issue:-?}"
+}
+
+# recovered <agent> <model>: a model answered again. Ends the cooldown and closes the rate-limit issue.
+recovered() {
+  local f=$STATE/cooldown/$1 issue=""
+  [ -e "$f" ] || return 0
+  read -r _ _ issue < "$f" || true
+  rm -f "$f"
+  if [ -n "$issue" ]; then
+    gh issue close "$issue" -R "$REPO" --comment "Recovered at $(now): $1 ran again, on $2.
+
+— dispatcher · no model" >/dev/null 2>&1 || true
+  fi
+  log "recovered $1, closed #${issue:-?}"
+}
+
 # ---------------------------------------------------------------- 1. reviewer
 
 while read -r n branch sha; do
   [ -n "$n" ] || continue
+  cooling reviewer && break
   if [[ $branch == tester/* ]] && ! has_status "$n" test/passed; then
     act gh api "repos/$REPO/statuses/$sha" -f state=success -f context=test/passed \
       -f description="Tester's own PR: not self-tested. CI and the reviewer gate it." >/dev/null
@@ -253,7 +356,8 @@ done < <(prs_with needs-review)
 while read -r n branch sha; do
   [ -n "$n" ] || continue
   case $(ci_state "$n") in
-    success) wake tester "pr-$n" "PR #$n needs testing."; exit 0 ;;
+    success) cooling tester && continue
+             wake tester "pr-$n" "PR #$n needs testing."; exit 0 ;;
     failure)
       relabel "$n" changes-requested needs-test
       comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back to the builder without testing. See the checks tab."
@@ -276,6 +380,7 @@ while read -r n branch sha; do
     log "needs-human pr-$n after 3 send-backs"
     continue
   fi
+  cooling "$owner" && continue
   wake "$owner" "pr-$n" "PR #$n was sent back. Fix it."
   exit 0
 done < <(prs_with changes-requested)
@@ -283,6 +388,7 @@ done < <(prs_with changes-requested)
 for agent in "${BUILDERS[@]}"; do
   for n in $(issues_with "assign:$agent"); do
     has_open_pr "$agent" "$n" && continue
+    cooling "$agent" && break
     wake "$agent" "issue-$n" "Issue #$n is assigned to you."
     exit 0
   done
@@ -293,7 +399,7 @@ done
 # Once a day, collect the Lesson: lines (at the start of a line) posted since the last collection. The orchestrator
 # folds them into agents/LESSONS.md in a PR labelled lessons, which the human merges. Skipped while one is open.
 today=$(date -u +%F)
-if [ "$(cat "$STATE/lessons-day" 2>/dev/null)" != "$today" ] && [ -z "$(prs_with lessons)" ]; then
+if [ "$(cat "$STATE/lessons-day" 2>/dev/null)" != "$today" ] && [ -z "$(prs_with lessons)" ] && ! cooling orchestrator; then
   since=$(cat "$STATE/lessons-since" 2>/dev/null || date -u -d '1 day ago' +%FT%TZ)
   lessons=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
     --jq '.[] | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"')
@@ -307,9 +413,11 @@ fi
 
 # ---------------------------------------------------------------- 5. orchestrator: the board
 
+# The board leaves out rate-limit issues: the dispatcher files them for the human, and they are not work for agents.
 board() {
   gh issue list -R "$REPO" --state all --limit 300 --json number,state,labels \
-    --jq 'map({n: .number, s: .state, l: ([.labels[].name] | sort)}) | sort_by(.n)'
+    --jq 'map(select(all(.labels[]; .name != "rate-limit")))
+      | map({n: .number, s: .state, l: ([.labels[].name] | sort)}) | sort_by(.n)'
 }
 save_board() { [ "$DRY_RUN" = 1 ] || board > "$STATE/board.json"; }
 
@@ -332,6 +440,7 @@ for n in $(issues_with assign:orchestrator); do
   if [ -e "$STATE/handled-issue-$n" ] && [ "$current" = "$(cat "$STATE/board.json" 2>/dev/null)" ]; then
     continue
   fi
+  cooling orchestrator && break
   wake orchestrator "issue-$n" "Issue #$n is assigned to you."
   [ "$DRY_RUN" = 1 ] || touch "$STATE/handled-issue-$n"
   save_board
@@ -350,7 +459,7 @@ changes=$(jq -rn --argjson old "$(cat "$STATE/board.json")" --argjson new "$curr
         elif $p.l != $i.l then "#\($i.n) labels are now: \($i.l | join(", "))"
         else empty end ]
   | join("; ")')
-if [ -n "$changes" ]; then
+if [ -n "$changes" ] && ! cooling orchestrator; then   # while it cools, changes pile up for its next run
   wake orchestrator board "The board changed since your last run: $changes."
   save_board
 fi

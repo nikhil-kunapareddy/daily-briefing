@@ -106,6 +106,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `assign:<agent>` | This agent owns the issue | Orchestrator only |
 | `bug`, `incident`, `tech-debt`, `change-request` | Kind of issue | Whoever files it |
 | `needs-human` | Stuck. Waits for the human | Any agent, or the dispatcher |
+| `rate-limit` | An agent can't reach any of its models. Not work: agents leave these issues alone | Dispatcher only |
 
 **Pull requests.** A PR has exactly one of the first four at a time. Whoever adds one removes the previous one.
 
@@ -163,6 +164,9 @@ and caps each run at 20 minutes. It checks from the end of the pipeline backward
    (a new or relabelled issue, a merged or closed PR).
 
 Anything with `needs-human` is skipped. When nothing is waiting, no agent runs and no tokens are spent.
+**Rate limits:** when a run fails because all of an agent's models are rate-limited, the dispatcher skips that agent
+for 15, 30, 60, then 120 minutes between tries, and the other agents keep working. The item keeps its labels.
+The dispatcher files one `rate-limit` issue for the human and closes it when the agent runs again.
 The wake-up message names the issue or PR. The agent reads the details itself with `gh`.
 **The dispatcher counts send-backs** (rule 5): when a PR gets `changes-requested` for the third time, it swaps the label for `needs-human`.
 

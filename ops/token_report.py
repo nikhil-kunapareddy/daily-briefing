@@ -18,7 +18,7 @@ from datetime import datetime
 
 REPO = "nikhil-kunapareddy/daily-briefing"
 STATE = os.path.expanduser(os.environ.get("STATE", "~/work/.dispatcher"))
-RESULTS = {0: "ok", 3: "no progress", 4: "no tool calls", 124: "timed out", 137: "killed"}
+RESULTS = {0: "ok", 3: "no progress", 4: "no tool calls", 5: "rate-limited", 124: "timed out", 137: "killed"}
 
 
 def gh_json(*args):

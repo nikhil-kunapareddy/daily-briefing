@@ -23,6 +23,7 @@ label bug               d73a4a "Something is broken"
 label incident          b60205 "The live app or its schedule is failing"
 label tech-debt         cfd3d7 "Worth fixing later; not a bug"
 label change-request    a2eeef "A change asked for by the human"
+label rate-limit        b60205 "An agent can't reach any of its models. Filed and closed by the dispatcher"
 
 # ---------------------------------------------------------------- rule for main
 # Every change arrives by PR. A PR merges only with green CI, the tester's and reviewer's statuses, and an
