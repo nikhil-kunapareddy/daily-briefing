@@ -244,6 +244,9 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
    any agent's comment on that issue or PR.
 10. **Use your tools; never pretend.** Run every command with your tool. Never write a command or a tool call as text in your
     reply. Only report output a tool gave you, and quote it. The dispatcher counts a run with no tool calls as a failed run.
+11. **Don't read papers.** The app handles IDs, titles and links, never a paper's content. Never open a paper's PDF or
+    arXiv page, and never call the live arXiv API. Work from `fixtures/arxiv_sample.xml`, which has no abstracts or
+    authors. The one exception is the tester making that file (its `SOUL.md`). Reading papers only spends tokens.
 
 ## Who wakes when
 

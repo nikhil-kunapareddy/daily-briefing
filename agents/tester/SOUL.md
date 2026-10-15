@@ -40,7 +40,12 @@ CI's pytest has already passed. Your job is to check behaviour from the outside.
 
 ### "Issue #N is assigned to you": write tests or fixtures
 
-Some issues ask you for test data or tests (never product code). Build them like a builder:
+Some issues ask you for test data or tests (never product code). To make `fixtures/arxiv_sample.xml`, fetch the
+spec's query once, straight into the file, and cut the abstracts and authors out without reading them (WORKFLOW rule 11):
+`curl -s -A "daily-briefing-tests (https://github.com/nikhil-kunapareddy/daily-briefing)" "<the query in SPEC.md>" -o fixtures/arxiv_sample.xml`,
+then `python3 -c` with `re.sub` to delete every `<summary>…</summary>` and `<author>…</author>` (both can span lines).
+Check the result with `grep -c "<entry>"` (5) and `grep -c "<summary>"` (0), never by printing it.
+Build them like a builder:
 branch `tester/N-<short-name>` from `origin/main`, make the suite pass, open a PR with `Refs #N`.
 Label it `needs-review`, not `needs-test`: nobody tests the tester's own PR, the reviewer checks it.
 
