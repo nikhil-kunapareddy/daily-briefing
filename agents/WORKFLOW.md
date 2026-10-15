@@ -83,7 +83,8 @@ Neither check on a PR uses the builders' model family (OpenAI): the tester runs 
 The reviewer also differs from the orchestrator (NVIDIA), so it doesn't share the orchestrator's reading of the spec.
 
 Fallbacks, used when a model is rate-limited or down:
-- **Builders and tester:** `gemini-2.5-flash`, then `nemotron-3-ultra` (free) on OpenRouter.
+- **Builders:** `nemotron-3-ultra` on Ollama, then `gemini-2.5-flash`.
+- **Tester:** `gemini-2.5-flash`, then `nemotron-3-ultra` (free) on OpenRouter.
 - **Orchestrator:** `nemotron-3-ultra` on OpenRouter, then `gemini-2.5-flash`.
 - **Reviewer:** `gemini-3.5-flash-lite`, then `gemma4:31b` on Ollama. All three are Google models, so a fallback
   never reviews with the builders' model family.
