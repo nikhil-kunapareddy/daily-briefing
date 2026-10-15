@@ -668,6 +668,17 @@ unreviewed_lessons=$(grep -E '^- \[ \] ' <<<"$lessons_body" | sed -E 's/^- \[ \]
 
 while read -r n branch sha; do
   [ -n "$n" ] || continue
+  # CI comes before review for every PR. A builder's PR passed it on the way to the tester; the tester's own PR skips
+  # the tester, not CI, so it is checked here: still running, wait; red, back to the tester like any red PR.
+  case $(ci_state "$n") in
+    pending) continue ;;
+    failure)
+      rerun_ci "$n" && continue                  # a flake gets one more try; wait for the re-run
+      relabel "$n" changes-requested needs-review
+      comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back without review. (A failure is re-run once per commit first, in case it was a flake.) See the checks tab."
+      sent_back "$n" ci
+      continue ;;
+  esac
   cooling reviewer && break
   if [[ $branch == tester/* ]] && ! has_status "$n" test/passed; then
     act gh api "repos/$REPO/statuses/$sha" -f state=success -f context=test/passed \

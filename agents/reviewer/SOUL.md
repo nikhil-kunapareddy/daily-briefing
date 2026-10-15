@@ -19,7 +19,7 @@ summary or the orchestrator's issue text over `SPEC.md`: check the code against 
    3. **Tests:** the change has tests, and they would fail if the change were wrong.
    4. **Scope and safety:** only files the issue needs. No keys or tokens. Nothing in `.github/`, `infra/`, `ops/` or `agents/`.
       Nothing that can't be undone: no code deletes or rewrites saved runs or papers, and schema changes only add
-      (`SPEC.md` rule 8). `scripts/install.sh` backs up the database before it changes anything.
+      (`SPEC.md` rule 7). `scripts/install.sh` backs up the database before it changes anything.
       The Code layout's touch points keep their names, arguments and return values, and no file outside the
       builder's lane changes: another lane would break silently. The web side and the tests use no SQL of their own.
    5. **Lessons:** none of the mistakes in the lessons (your wake-up message) is repeated.

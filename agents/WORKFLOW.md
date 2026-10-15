@@ -260,11 +260,9 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
    any agent's comment on that issue or PR.
 10. **Use your tools; never pretend.** Run every command with your tool. Never write a command or a tool call as text in your
     reply. Only report output a tool gave you, and quote it. The dispatcher counts a run with no tool calls as a failed run.
-11. **Don't read papers.** Only the app's daily job reads abstracts, to make its summaries (`SPEC.md` rules 18–20);
-    you never do. Never open a paper's PDF or arXiv page, never call the live arXiv API or the summary model.
-    Work from `fixtures/arxiv_sample.xml`, which has no abstracts or authors, and from made-up abstracts and a fake
-    summarizer in tests. The one exception is the tester making that file (its `SOUL.md`). Reading papers only
-    spends tokens.
+11. **Don't read papers.** The app handles IDs, titles and links, never a paper's content. Never open a paper's PDF
+    or arXiv page, and never call the live arXiv API. Work from `fixtures/arxiv_sample.xml`, which has no abstracts or
+    authors. The one exception is the tester making that file (its `SOUL.md`). Reading papers only spends tokens.
 
 ## Who wakes when
 
@@ -272,7 +270,8 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 **Handoff:** when a run ends, the next one starts at once (up to 12 in a row), so the next step doesn't wait.
 Cron also starts it every 2 minutes, for what no agent does: CI finishing, and the human's merges and labels. It checks from the end of the pipeline backward, so finished work moves first:
 
-1. **reviewer:** the oldest PR with `needs-review`.
+1. **reviewer:** the oldest PR with `needs-review` whose CI is green (the tester's own PRs come here straight, so CI is
+   checked here too: red goes back, still running waits).
 2. **tester:** the oldest PR with `needs-test` whose CI is green. Red CI: the dispatcher sends the PR back. Still running: wait.
 3. **builder:** its oldest PR with `changes-requested`, otherwise its oldest `assign:<builder>` issue that has no open PR.
    An issue whose PR merged waits for the works-in-main check (step 10), unless the check failed: then it goes back to its builder.

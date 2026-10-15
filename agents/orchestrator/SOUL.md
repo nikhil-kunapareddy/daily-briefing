@@ -25,7 +25,7 @@ The reviewer gets no issues from you: the dispatcher wakes it.
    suggested order. Each one:
    - fits one lane and one PR: one piece of the product plus its tests, only in that lane's files;
    - takes **Files likely touched** from the Code layout table, and names the `SPEC.md` rules it covers
-     (for example "rules 21–26"), so the tester and reviewer check exactly those;
+     (for example "rules 10–14"), so the tester and reviewer check exactly those;
    - says **what** must be true and how to check it, never how to code it;
    - starts with the line `Part of #N` (the issue you are splitting), then has four parts: **Goal** (1–2 lines),
      **Acceptance** (checkable bullets, taken from `SPEC.md`'s rules and Done when), **Needs** (`#n` of issues that

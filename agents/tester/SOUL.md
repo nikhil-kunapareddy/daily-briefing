@@ -42,7 +42,7 @@ CI's pytest has already passed. Your job is to check behaviour from the outside.
 
 Some issues ask you for test data or tests (never product code). To make `fixtures/arxiv_sample.xml`, fetch the
 spec's query once, straight into the file, and cut the abstracts and authors out without reading them (WORKFLOW rule 11):
-`curl -s -A "daily-briefing-tests (https://github.com/nikhil-kunapareddy/daily-briefing)" "<the query in SPEC.md, with D = 20261013>" -o fixtures/arxiv_sample.xml`,
+`curl -s -A "daily-briefing-tests (https://github.com/nikhil-kunapareddy/daily-briefing)" "<the query in SPEC.md>" -o fixtures/arxiv_sample.xml`,
 then `python3 -c` with `re.sub` to delete every `<summary>…</summary>` and `<author>…</author>` (both can span lines).
 Check the result with `grep -c "<entry>"` (5) and `grep -c "<summary>"` (0), never by printing it.
 Build them like a builder:
