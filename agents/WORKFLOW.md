@@ -181,6 +181,18 @@ From each provider's API on 2026-10-15 (Ollama `/api/show`, OpenRouter `/models`
 
 The tightest is `gpt-oss:120b`, the builders' main model, at 128k: keep reads to the files the ticket needs.
 
+Tools each agent's model can call. Checked on 2026-10-15: OpenClaw's own list from one tiny run per config,
+Hermes's from its toolsets (`terminal`, `file`, `todo`; every other toolset is off).
+
+| Agent | Runtime | Tools | Count | Limits |
+|---|---|---|---:|---|
+| builder-ingest, builder-web, builder-ops, tester | OpenClaw | `read`, `write`, `edit`, `apply_patch`, `exec`, `process`, and Tool Search's `tool_search`, `tool_describe`, `tool_call` | 9 | `exec` runs only the 45 programs in `agents/openclaw/exec-allowlist.txt` (git, gh, python, curl, sqlite3, …). File tools stay inside the agent's own folder. The tool definitions add 5,348 characters to every prompt |
+| orchestrator, reviewer | Hermes | `terminal`, `process_manage`, `read_file`, `write_file`, `patch`, `search_files`, `todo_list` | 7 | `terminal` has no allowlist: Hermes's "smart" approvals ask a second model about any command that looks risky and deny the dangerous ones. Both work in their own clone, kept on `main`. At most 60 turns a run (reviewer 40) |
+
+For every agent: the Linux user `agents` has no sudo and can't read the live data. GitHub access is the one bot
+account: write access, no admin, can't push to `main` or merge. No agent has web search, a browser, memory,
+delegation or code-execution tools.
+
 The dispatcher logs the model and token counts of every run (`runs.jsonl` on the VM).
 
 ## Labels
