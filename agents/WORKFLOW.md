@@ -160,6 +160,20 @@ Models and fallbacks, used when a model is rate-limited or down:
 - The runtime falls back on its own (1st, then 2nd backup) when a model is rate-limited or down.
 - All three reviewer models are Google, so a fallback never reviews with the builders' model family.
 
+Context window of each model: the most tokens one request can hold (prompt, files, history and the reply).
+From each provider's API on 2026-10-15 (Ollama `/api/show`, OpenRouter `/models`, Gemini `models.get`).
+
+| Model | Provider | Context window | Used by |
+|---|---|---:|---|
+| `gpt-oss:120b` | Ollama Cloud | 131,072 (128k) | builders (main) |
+| `nemotron-3-ultra` | Ollama Cloud | 262,144 (256k) | orchestrator (main), builders (1st backup) |
+| `gemma4:31b` | Ollama Cloud | 262,144 (256k) | tester (main), reviewer (2nd backup) |
+| `nemotron-3-ultra:free` | OpenRouter | 1,000,000 (1M) | orchestrator (1st backup), tester (2nd backup) |
+| `gemini-2.5-flash` | Gemini API | 1,048,576 (1M) | reviewer (main), tester (1st backup), orchestrator and builders (2nd backup) |
+| `gemini-3.5-flash-lite` | Gemini API | 1,048,576 (1M) | reviewer (1st backup) |
+
+The tightest is `gpt-oss:120b`, the builders' main model, at 128k: keep reads to the files the ticket needs.
+
 The dispatcher logs the model and token counts of every run (`runs.jsonl` on the VM).
 
 ## Labels
