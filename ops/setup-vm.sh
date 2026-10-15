@@ -21,6 +21,7 @@ has_cron() { crontab -u "$1" -l 2>/dev/null | grep -q "# $2\$"; }
 
 echo "== app"
 loginctl enable-linger app
+install -d -o app -g app -m 0755 /var/log/daily-briefing   # deploy.log: readable by the agents, unlike the data
 cron_line app deploy "*/5 * * * * bash $ROOT/ops/deploy.sh"
 
 echo "== agents"

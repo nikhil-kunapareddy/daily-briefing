@@ -1,4 +1,4 @@
-# Programs the OpenClaw agents (builder-ingest, builder-web, tester) may run. One path or glob per line.
+# Programs the OpenClaw agents (builder-ingest, builder-web, builder-ops, tester) may run. One path or glob per line.
 # agents/setup.sh applies it with `openclaw approvals set`; anything else is denied at once.
 # A command line is denied if any program in it is missing here, so pipes need every part listed.
 # Shell builtins (cd, echo, test, kill, printf) need no entry.

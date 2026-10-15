@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Sets up the five agents for the agents user, from the files in agents/. Safe to re-run.
+# Sets up the six agents for the agents user, from the files in agents/. Safe to re-run.
 # ops/setup-vm.sh runs it; by hand:  sudo -u agents -H bash /srv/daily-briefing/agents/setup.sh
 #
 #   clones    ~/work/<agent>/repo, one per agent, commits authored as the agent's name on the machine account
-#   OpenClaw  builder-ingest, builder-web, tester: openclaw/openclaw.json5, exec allowlist, Langfuse plugin
+#   OpenClaw  builder-ingest, builder-web, builder-ops, tester: openclaw/openclaw.json5, exec allowlist, Langfuse plugin
 #   Hermes    orchestrator, reviewer: one profile each, settings from hermes/*.json, Langfuse plugin
 #   prompts   sync-prompts.sh
 set -euo pipefail
@@ -12,7 +12,7 @@ export ROOT=${ROOT:-/srv/daily-briefing}       # override only to try an unmerge
 A=$ROOT/agents
 WORK=/home/agents/work
 REPO=nikhil-kunapareddy/daily-briefing
-OPENCLAW_AGENTS=(builder-ingest builder-web tester)
+OPENCLAW_AGENTS=(builder-ingest builder-web builder-ops tester)
 HERMES_AGENTS=(orchestrator reviewer)
 
 # shellcheck source=env.sh
@@ -81,5 +81,5 @@ done
 
 echo "== prompts"
 bash "$A/sync-prompts.sh"
-echo "  copied for all five agents"
+echo "  copied for all six agents"
 echo "== agents ready"

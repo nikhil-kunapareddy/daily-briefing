@@ -1,4 +1,4 @@
-// OpenClaw config for the three OpenClaw agents (builder-ingest, builder-web, tester).
+// OpenClaw config for the four OpenClaw agents (builder-ingest, builder-web, builder-ops, tester).
 // agents/setup.sh copies it to ~agents/.openclaw/openclaw.json. Keys come from the environment (agents/env.sh).
 // Model choices and reasons: agents/WORKFLOW.md (Team).
 {
@@ -47,6 +47,18 @@
         identity: { name: "builder-web" },
         workspace: "/home/agents/work/builder-web",
         cwd: "/home/agents/work/builder-web/repo",
+        model: {
+          primary: "ollama-cloud/gpt-oss:120b",
+          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+        },
+        tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
+                 exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
+      },
+      "builder-ops": {
+        name: "builder-ops",
+        identity: { name: "builder-ops" },
+        workspace: "/home/agents/work/builder-ops",
+        cwd: "/home/agents/work/builder-ops/repo",
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
           fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],

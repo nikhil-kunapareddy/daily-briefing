@@ -10,7 +10,7 @@ REPO=nikhil-kunapareddy/daily-briefing
 
 label() { gh label create "$1" -R "$REPO" --color "$2" --description "$3" --force >/dev/null && echo "  $1"; }
 echo "== labels"
-for a in orchestrator builder-ingest builder-web tester; do
+for a in orchestrator builder-ingest builder-web builder-ops tester; do
   label "assign:$a" 1d76db "Owned by $a. Set by the orchestrator only"
 done
 label needs-test        fbca04 "PR waits for the tester"

@@ -2,7 +2,7 @@
 # Copies the prompts from the main checkout into each agent's runtime files.
 # Runs as the agents user: once from agents/setup.sh, then from ops/dispatcher.sh before every wake-up,
 # so a merged prompt change reaches an agent on its next run.
-#   agents/sync-prompts.sh [agent ...]      (default: all five)
+#   agents/sync-prompts.sh [agent ...]      (default: all six)
 #
 # OpenClaw agents get AGENTS.md (team rules), SOUL.md (role) and IDENTITY.md (name and lane) in their workspace.
 # Hermes agents get one SOUL.md in their profile: role first, then the team rules.
@@ -29,7 +29,7 @@ put() {
 sync_one() {
   local agent=$1
   case $agent in
-    builder-ingest|builder-web)
+    builder-ingest|builder-web|builder-ops)
       mkdir -p "$WORK/$agent"
       put "$WORK/$agent/AGENTS.md"   "$A/WORKFLOW.md"
       put "$WORK/$agent/SOUL.md"     "$A/builder/SOUL.md"
@@ -46,5 +46,5 @@ sync_one() {
   esac
 }
 
-[ $# -gt 0 ] || set -- orchestrator builder-ingest builder-web tester reviewer
+[ $# -gt 0 ] || set -- orchestrator builder-ingest builder-web builder-ops tester reviewer
 for agent in "$@"; do sync_one "$agent"; done

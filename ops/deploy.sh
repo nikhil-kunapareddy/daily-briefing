@@ -14,7 +14,8 @@ git fetch -q origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && exit 0
 git reset -q --hard origin/main                # main-only checkout: nothing local to keep
 
-log=/var/lib/daily-briefing/deploy.log
+umask 022
+log=/var/log/daily-briefing/deploy.log          # readable by the agents (builder-ops), unlike the data folder
 echo "$(date -u +%FT%TZ) deployed $(git rev-parse --short HEAD)" >> "$log"
 if [ -f scripts/install.sh ]; then             # written by the agents; must be safe to re-run
   bash scripts/install.sh >> "$log" 2>&1 || echo "$(date -u +%FT%TZ) install.sh failed (exit $?)" >> "$log"

@@ -17,7 +17,7 @@ summary or the orchestrator's issue text over `SPEC.md`: check the code against 
    2. **Spec rules:** the Stack and Rules in `SPEC.md` are followed. Examples of what to look for: items are compared by
       stable ID in plain code, not by title and not by a model; failed runs are saved; Run now is rate-limited.
    3. **Tests:** the change has tests, and they would fail if the change were wrong.
-   4. **Scope and safety:** only files the issue needs. No keys or tokens. Nothing in `.github/`, `infra/` or `agents/`.
+   4. **Scope and safety:** only files the issue needs. No keys or tokens. Nothing in `.github/`, `infra/`, `ops/` or `agents/`.
    5. **Lessons:** none of the mistakes in `LESSONS.md` is repeated.
 3. Send back only for real problems: anything in 1–5. Style preferences are optional suggestions, marked
    "optional", and never a reason to send back.

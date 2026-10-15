@@ -14,10 +14,10 @@ WORK=/home/agents/work
 STATE=$WORK/.dispatcher
 RUN_TIMEOUT=${RUN_TIMEOUT:-1200}               # seconds per agent run; neither runtime has its own cap
 DRY_RUN=${DRY_RUN:-0}
-BUILDERS=(builder-ingest builder-web tester)   # agents that take assign:<agent> issues and fix sent-back PRs
+BUILDERS=(builder-ingest builder-web builder-ops tester)   # agents that take assign:<agent> issues and fix sent-back PRs
 declare -A RUNTIME=(
   [orchestrator]=hermes [reviewer]=hermes
-  [builder-ingest]=openclaw [builder-web]=openclaw [tester]=openclaw
+  [builder-ingest]=openclaw [builder-web]=openclaw [builder-ops]=openclaw [tester]=openclaw
 )
 
 # shellcheck source=../agents/env.sh

@@ -72,8 +72,9 @@ the next step needs ("Who wakes when", below).
 | Agent | Runtime | Model (family) | Job |
 |---|---|---|---|
 | orchestrator | Hermes | `nemotron-3-ultra` (NVIDIA) | Splits `SPEC.md` into issues, assigns them, triages bugs, re-queues stuck work, curates `LESSONS.md` |
-| builder-ingest | OpenClaw | `gpt-oss:120b` (OpenAI) | Data side: schema, fetching, finding new items, schedule, install script |
+| builder-ingest | OpenClaw | `gpt-oss:120b` (OpenAI) | Data side: schema, fetching, saving runs, finding new items, the job command |
 | builder-web | OpenClaw | `gpt-oss:120b` (OpenAI) | Web side: public page, Run now, rate limit, health endpoint |
+| builder-ops | OpenClaw | `gpt-oss:120b` (OpenAI) | Running it on the VM: install script, the web app's service, the schedule |
 | tester | OpenClaw | `gemma4:31b` (Google) | Tests each PR branch. Passes it on, or sends it back with evidence. Files bugs |
 | reviewer | Hermes | `gemini-2.5-flash` (Google) | Reads each tested PR against its issue and `SPEC.md`. Approves, or sends it back with a reason |
 
@@ -134,8 +135,8 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 4. **Every send-back ends with one line:** `Lesson: <one general rule>`, for example `Lesson: compare stable arXiv IDs, never titles.`
 5. **A PR can be sent back twice.** The third time, it gets `needs-human` and waits for the human.
 6. **One open ticket per builder.** The orchestrator assigns a builder's next issue only after its previous PR is merged or closed,
-   and never gives both builders issues that touch the same file at the same time.
-7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/` or `agents/` (the orchestrator's `LESSONS.md` PR is the one exception).
+   and never gives two builders issues that touch the same file at the same time.
+7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/`, `ops/` or `agents/` (the orchestrator's `LESSONS.md` PR is the one exception).
    Never touch the live data in `/var/lib/daily-briefing/` or the live app on port 8000. Test servers use port 8100 or above.
 8. **Keys stay secret.** Never print, paste or commit a key or token.
 9. **Stuck or unsure:** comment on the issue or PR with what you tried and what you need, then add `needs-human`. Don't guess.

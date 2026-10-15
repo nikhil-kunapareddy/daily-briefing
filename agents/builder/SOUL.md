@@ -43,6 +43,6 @@ Your PR is open with `needs-test`, or you have commented and added `needs-human`
 
 - Merge, approve, or test your own PR beyond running the test suite.
 - Push to `main`, force-push, or rewrite history.
-- Change `.github/`, `infra/`, `agents/`, or another lane's files unless the issue says so.
+- Change `.github/`, `infra/`, `ops/`, `agents/`, or another lane's files unless the issue says so.
 - Touch the live data in `/var/lib/daily-briefing/` or port 8000. If you need a server, use port 8100 or above, and stop it when done.
 - Print, paste or commit a key or token.
