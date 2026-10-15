@@ -16,6 +16,48 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 - **Public page:** the latest briefing at the top, the run history below, and every earlier date's briefing one click away.
 - **Run now:** a button on the page that starts a run, rate-limited.
 
+**How a run works** (rule numbers in brackets). Both cron jobs are here: the app's 02:00 job, and the deploy check
+that installs each merge.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+flowchart TD
+  CR["<b>02:00 UTC</b> · app's crontab<br/>python -m app.job"]
+  RN["<b>Run now</b> · POST /run-now<br/>rate limit + 'running' row, one transaction (16, 27)"]
+  BG["starts python -m app.job --run-id N<br/>the page comes back at once (27, 29)"]
+  LK{{"run.lock free? (28)"}}
+  LF(["saved as failed:<br/>another run was still going"])
+  OD["dates to check: every open date up to yesterday,<br/>oldest first, else yesterday (5)"]
+  CK["check one date: 1 arXiv request,<br/>3 s after the last one (9)"]
+  PA["papers: new = stable ID never seen (1–2)<br/>save the check and the papers (6, 8)"]
+  EM["empty: no submissions yet (7)"]
+  ER["error, timeout, non-200 or error entry:<br/>failed check, date stays open (7)"]
+  MO{{"another date?"}}
+  SU{{"new papers, or summaries to retry? (18)"}}
+  GE["1 Gemini request · on any failure,<br/>the abstract's first sentence (18–19)"]
+  FI(["run saved ✓ or ✗ · job.log (6, 32)"])
+  PG["the page reads it through app/db.py (11–12)"]
+
+  CR --> LK
+  RN --> BG --> LK
+  LK -->|"yes"| OD
+  LK -.->|"busy over 10 min"| LF
+  OD --> CK
+  CK --> PA & EM & ER
+  PA & EM & ER --> MO
+  MO -->|"yes"| CK
+  MO -->|"no"| SU
+  SU -->|"yes"| GE --> FI
+  SU -->|"no: no model call"| FI
+  FI --> PG
+
+  subgraph DEP["Every 2 min · ops/deploy.sh, after a merge to main"]
+    direction LR
+    D1["pull main"] --> D2["scripts/install.sh: back up the database,<br/>venv and dependencies, restart the service,<br/>one 02:00 crontab line (Install)"]
+  end
+  PG ~~~ DEP
+```
+
 ## Stack
 
 - **Python 3.12** (the VM's and CI's). Dependencies pinned with exact versions in `requirements.txt`.
@@ -248,6 +290,32 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
 - Settings come from `app/config.py` only.
 - These names, their arguments and what they return don't change unless this spec changes. A lane that needs one
   more asks for it (WORKFLOW.md, "Needed by").
+
+**How the agents build it** (the numbers are the waves of the order below; arrows are Needs and touch points):
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+flowchart TD
+  W1["<b>1 · builder-ingest</b><br/>config · db (schema, read and write functions) · requirements.txt"]
+  W2T["<b>2 · tester</b><br/>fixtures/arxiv_sample.xml"]
+  W2O["<b>2 · builder-ops</b><br/>scripts/install.sh<br/>needs only two names:<br/>app.web:create_app() · python -m app.job"]
+  W3I["<b>3 · builder-ingest</b><br/>arxiv · job, with open dates"]
+  W3W["<b>3 · builder-web</b><br/>page · day navigation · history · /runs"]
+  W4I["<b>4 · builder-ingest</b><br/>summaries"]
+  W4W["<b>4 · builder-web</b><br/>Run now · rate limit · /healthz"]
+  W5["<b>5 · tester</b><br/>behaviour tests across the lanes"]
+
+  W1 -->|"db write functions"| W3I
+  W1 -->|"db read functions"| W3W
+  W3I --> W4I
+  W3I -->|"python -m app.job --run-id N"| W4W
+  W3W --> W4W
+  W2T --> W5
+  W4I --> W5
+  W4W --> W5
+  W1 ~~~ W2O
+  W1 ~~~ W2T
+```
 
 **A sensible order** (the orchestrator decides; Needs go by this):
 1. builder-ingest: `config`, `db` with the schema and the read functions, `requirements.txt`.
