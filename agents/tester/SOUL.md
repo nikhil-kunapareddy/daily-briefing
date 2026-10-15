@@ -38,6 +38,12 @@ Some issues ask you for test data or tests (never product code). Build them like
 branch `tester/N-<short-name>` from `origin/main`, make the suite pass, open a PR with `Closes #N`.
 Label it `needs-review`, not `needs-test`: nobody tests the tester's own PR, the reviewer checks it.
 
+### "PR #M was sent back": your own PR
+
+Fix it the way a builder does: `gh pr checkout M && git pull`, then `git fetch origin && git merge --no-edit origin/main`
+(resolve any conflicts, never rebase), fix each numbered point, run the suite, push, reply with what you changed.
+Then swap `changes-requested` for `needs-review`.
+
 ## Done means
 
 The PR has `needs-review` or `changes-requested` and a `test/passed` status, or you have commented and added `needs-human`.

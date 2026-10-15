@@ -3,7 +3,7 @@
 # Root. Safe to re-run.
 #
 #   app     ops/deploy.sh every 5 minutes, and lingering, so the app's systemd --user services run without a login
-#   agents  agents/setup.sh (runtimes, profiles, clones), then ops/dispatcher.sh every 5 minutes
+#   agents  agents/setup.sh (runtimes, profiles, clones), then ops/dispatcher.sh --chain every 2 minutes
 #
 # The dispatcher starts paused. To start the team:  sudo -u agents rm /home/agents/work/.dispatcher/PAUSE
 set -euo pipefail
@@ -31,5 +31,5 @@ if ! has_cron agents dispatcher; then           # first install only: the human 
   sudo -u agents touch "$STATE/PAUSE"
   echo "  dispatcher paused (remove $STATE/PAUSE to start)"
 fi
-cron_line agents dispatcher "*/5 * * * * bash $ROOT/ops/dispatcher.sh >> $STATE/cron.log 2>&1"
+cron_line agents dispatcher "*/2 * * * * bash $ROOT/ops/dispatcher.sh --chain >> $STATE/cron.log 2>&1"
 echo "== done"

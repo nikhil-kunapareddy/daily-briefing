@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Wakes at most one agent per run, based on GitHub labels. No model calls here: plain rules only.
-# Runs every 5 minutes from the agents user's crontab (set up by agents/setup.sh). Rules: agents/WORKFLOW.md.
+# Started every 2 minutes by the agents user's crontab, as --chain (set up by ops/setup-vm.sh). Rules: agents/WORKFLOW.md.
 # Logs: ~/work/.dispatcher/dispatch.log (one line per decision), runs.jsonl (model and tokens per run), runs/ (raw output).
 #
-#   ops/dispatcher.sh            normal run
+#   ops/dispatcher.sh            normal run: at most one agent
+#   ops/dispatcher.sh --chain    normal runs back to back, while each one wakes an agent (the handoff)
 #   DRY_RUN=1 ops/dispatcher.sh  print what would happen, change nothing
 #   touch ~/work/.dispatcher/PAUSE   stop all wake-ups until the file is removed (dry runs still work)
 set -euo pipefail
@@ -25,6 +26,22 @@ declare -A RUNTIME=(
 # shellcheck source=../agents/env.sh
 . "$ROOT/agents/env.sh"                        # PATH, keys, tracing names (cron starts with a bare environment)
 mkdir -p "$STATE/runs" "$STATE/fails"
+
+# Handoff: while each run wakes an agent, the next run starts the moment it ends, so the next step doesn't wait for
+# the clock. The 2-minute cron start catches what no agent does: CI finishing, and the human's merges, approvals
+# and labels. At most MAX_CHAIN runs in a row; the next cron start carries on.
+MAX_CHAIN=${MAX_CHAIN:-12}
+if [ "${1:-}" = --chain ]; then
+  exec 8>"$STATE/chain.lock"
+  flock -n 8 || exit 0                         # a chain is already running
+  for _ in $(seq "$MAX_CHAIN"); do
+    rm -f "$STATE/woke"
+    bash "$0" || true
+    [ -e "$STATE/woke" ] || break              # nothing was waiting
+  done
+  exit 0
+fi
+
 exec 9>"$STATE/lock"
 flock -n 9 || exit 0                           # an agent is still running
 [ -e "$STATE/PAUSE" ] && [ "$DRY_RUN" != 1 ] && exit 0   # a dry run still shows what would happen
@@ -35,8 +52,11 @@ act() { if [ "$DRY_RUN" = 1 ]; then echo "would: $*"; else "$@"; fi; }   # for c
 
 # ---------------------------------------------------------------- board
 
-prs=$(gh pr list -R "$REPO" --state open --limit 100 \
-  --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup)
+load_prs() {
+  prs=$(gh pr list -R "$REPO" --state open --limit 100 \
+    --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup,mergeable)
+}
+load_prs
 load_issues() { issues=$(gh issue list -R "$REPO" --state open --limit 200 --json number,labels,createdAt,author,body); }
 load_issues
 
@@ -143,6 +163,7 @@ wake() {
 
   log "wake $agent $key: $task${backup:+ (retry on backup model $backup)}"
   [ "$DRY_RUN" = 1 ] && return 0
+  : > "$STATE/woke"                            # tells --chain to run again as soon as this run ends
 
   bash "$ROOT/agents/sync-prompts.sh" "$agent"  # merged prompt changes take effect on this run
   before=$(item_state "$key")
@@ -422,6 +443,39 @@ done < <(jq -r '.[] | select(all(.labels[]; .name != "rate-limit" and .name != "
   | @tsv' <<<"$issues")
 [ "$gated" = 0 ] || load_issues                 # an agent may have assigned it in the same run it filed it
 
+# ---------------------------------------------------------------- 0b. PRs that conflict with main, or fell behind it
+
+# Builders work at the same time on branches cut from different points of main. Plain git rules, no model:
+# - A PR that conflicts with main goes back to its owner, to merge origin/main in and resolve it.
+#   It's not the PR's fault, so it doesn't count against its send-backs.
+# - main only takes a PR that is up to date with it (the ruleset's strict check), so nothing merges untested on top of
+#   the latest main. A PR about to be tested, or waiting for the human, that fell behind gets main merged in by GitHub.
+#   The new commit has no test or review yet, so the PR goes round again.
+# lessons PRs are the human's to handle.
+changed=0
+while read -r n branch sha mergeable label; do
+  [ -n "$n" ] || continue
+  owner=${branch%%/*}
+  next=needs-test; [ "$owner" = tester ] && next=needs-review   # nobody tests the tester's own PR
+  if [ "$mergeable" = CONFLICTING ]; then
+    [ "$label" = changes-requested ] && continue                 # already with its owner
+    relabel "$n" changes-requested "$label"
+    comment "$n" "Dispatcher: this PR conflicts with \`main\`. Merge \`origin/main\` into the branch, resolve the conflicts, run the tests, push. (This doesn't count as a send-back.)"
+    log "conflict pr-$n: back to $owner"
+    changed=1
+  elif [[ $label =~ ^(needs-test|ready-to-merge)$ ]] &&
+       [ "$(gh api "repos/$REPO/compare/main...$sha" --jq .behind_by 2>/dev/null || echo 0)" -gt 0 ]; then
+    act gh api -X PUT "repos/$REPO/pulls/$n/update-branch" -f expected_head_sha="$sha" >/dev/null || continue
+    [ "$label" = "$next" ] || relabel "$n" "$next" "$label"
+    comment "$n" "Dispatcher: \`main\` moved on, so main was merged into this branch. The new commit is tested and reviewed again before it can merge."
+    log "behind pr-$n: merged main in, back to $next"
+    changed=1
+  fi
+done < <(jq -r '.[] | select(all(.labels[]; .name != "needs-human" and .name != "lessons"))
+  | ([.labels[].name] | map(select(IN("needs-test", "needs-review", "changes-requested", "ready-to-merge"))) | first // "") as $l
+  | select($l != "") | "\(.number) \(.headRefName) \(.headRefOid) \(.mergeable) \($l)"' <<<"$prs")
+[ "$changed" = 0 ] || load_prs
+
 # ---------------------------------------------------------------- 1. reviewer
 
 while read -r n branch sha; do
@@ -447,8 +501,7 @@ while read -r n branch sha; do
       relabel "$n" changes-requested needs-test
       comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back to the builder without testing. (A failure is re-run once per commit first, in case it was a flake.) See the checks tab."
       sent_back "$n" ci
-      prs=$(gh pr list -R "$REPO" --state open --limit 100 \
-        --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup) ;;
+      load_prs ;;
     pending) ;;
   esac
 done < <(prs_with needs-test)

@@ -30,6 +30,7 @@ label rate-limit        b60205 "An agent can't reach any of its models. Filed an
 # Every change arrives by PR. A PR merges only with green CI, the tester's and reviewer's statuses, and an
 # approval from someone other than its author. All PRs come from the agents' account, so only the human can
 # approve and merge. The repo admin (the human) can bypass, for setup commits and lessons PRs.
+# The PR must also be up to date with main (strict), so it was tested on top of everything merged before it.
 
 echo "== rule for main"
 body=$(cat <<'EOF'
@@ -49,7 +50,7 @@ body=$(cat <<'EOF'
         "require_last_push_approval": false,
         "required_review_thread_resolution": false } },
     { "type": "required_status_checks", "parameters": {
-        "strict_required_status_checks_policy": false,
+        "strict_required_status_checks_policy": true,
         "required_status_checks": [
           { "context": "pytest" },
           { "context": "test/passed" },

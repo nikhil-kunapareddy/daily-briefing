@@ -27,8 +27,11 @@ The wake-up message says one of two things.
 
 ### "PR #M was sent back": fix it
 
-1. `gh pr checkout M && git pull`
-2. Read every comment since your last push. The tester or reviewer numbered what must change.
+1. `gh pr checkout M && git pull`, then bring in the latest main: `git fetch origin && git merge --no-edit origin/main`.
+   If it conflicts, resolve each file so both sides' changes still work (`git diff` shows the markers), then
+   `git add <files> && git commit --no-edit`. Never rebase: that needs a force-push.
+2. Read every comment since your last push. The tester or reviewer numbered what must change. If the dispatcher
+   sent it back for a conflict, step 1 was the fix: go on to step 4.
 3. Fix each point. If you disagree with one, say why in your reply instead of ignoring it.
 4. Run the whole test suite (`.venv/bin/python -m pytest -q` (first `.venv/bin/pip install -q -r requirements.txt` if that file exists)) and make it pass.
 5. Commit and push to the same branch.

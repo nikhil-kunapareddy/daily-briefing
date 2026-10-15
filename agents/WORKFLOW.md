@@ -68,8 +68,8 @@ A sent-back PR goes back to step 3 on the same branch. CI, test and review each 
 send-back by the same check gets `needs-human` instead (rule 5).
 Cheap checks run first, so the strong reviewer model only sees code that already works.
 
-No agent hands work to another directly. Every 5 minutes the dispatcher reads the labels and wakes the one agent
-the next step needs ("Who wakes when", below).
+No agent hands work to another directly. When an agent's run ends, the dispatcher reads the labels and wakes the one
+agent the next step needs ("Who wakes when", below).
 
 ## Team
 
@@ -163,8 +163,9 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 
 ## Who wakes when
 
-`ops/dispatcher.sh` runs every 5 minutes with no model. It wakes at most one agent per run, under a lock,
-and caps each run at 20 minutes. It checks from the end of the pipeline backward, so finished work moves first:
+`ops/dispatcher.sh` runs with no model. It wakes at most one agent per run, under a lock, and caps each run at 20 minutes.
+**Handoff:** when a run ends, the next one starts at once (up to 12 in a row), so the next step doesn't wait.
+Cron also starts it every 2 minutes, for what no agent does: CI finishing, and the human's merges and labels. It checks from the end of the pipeline backward, so finished work moves first:
 
 1. **reviewer:** the oldest PR with `needs-review`.
 2. **tester:** the oldest PR with `needs-test` whose CI is green. Red CI: the dispatcher sends the PR back. Still running: wait.
