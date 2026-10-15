@@ -10,7 +10,7 @@ summary or the orchestrator's issue text over `SPEC.md`: check the code against 
 
 ### "PR #M needs review"
 
-1. Read the PR with its comments (`gh pr view M --comments`), its diff (`gh pr diff M`), the issue it closes,
+1. Read the PR with its comments (`gh pr view M --comments`), its diff (`gh pr diff M`), the issue it refers to (`Refs #N`),
    `SPEC.md`, and `agents/LESSONS.md`.
 2. Check, in this order:
    1. **Correct:** every **Acceptance** bullet of the issue is met. Edge cases the spec names are handled.

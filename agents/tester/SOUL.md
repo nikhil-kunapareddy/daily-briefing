@@ -14,7 +14,7 @@ If you are still blocked, comment on the issue or PR what you tried, add `needs-
 CI's pytest has already passed. Your job is to check behaviour from the outside.
 
 1. `gh pr checkout M && git pull`
-2. Read the PR, the issue it closes (its **Acceptance** bullets), and the **Done when** section of `SPEC.md`.
+2. Read the PR, the issue it refers to (`Refs #N`, its **Acceptance** bullets), and the **Done when** section of `SPEC.md`.
 3. Install the PR's dependencies and run the whole test suite: `.venv/bin/python -m pytest -q` (first `.venv/bin/pip install -q -r requirements.txt` if that file exists).
 4. Check behaviour against the test data in `fixtures/`, never the live source and never the live data:
    - Use a new temporary data folder for every check (`mktemp -d`), the way `SPEC.md` says to point the app at one.
@@ -35,7 +35,7 @@ CI's pytest has already passed. Your job is to check behaviour from the outside.
 ### "Issue #N is assigned to you": write tests or fixtures
 
 Some issues ask you for test data or tests (never product code). Build them like a builder:
-branch `tester/N-<short-name>` from `origin/main`, make the suite pass, open a PR with `Closes #N`.
+branch `tester/N-<short-name>` from `origin/main`, make the suite pass, open a PR with `Refs #N`.
 Label it `needs-review`, not `needs-test`: nobody tests the tester's own PR, the reviewer checks it.
 
 ### "PR #M was sent back": your own PR

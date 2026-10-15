@@ -22,7 +22,7 @@ The wake-up message says one of two things.
 5. Add or update unit tests for what you changed, in `tests/`.
 6. Run the whole test suite: `.venv/bin/python -m pytest -q` (first `.venv/bin/pip install -q -r requirements.txt` if that file exists). Make it pass. If it fails, fix it. Don't open a PR with failing tests.
 7. Commit, push the branch, and open the PR:
-   - PR body, first line: `Closes #N`. Then 2–5 lines on what changed, and pytest's summary line.
+   - PR body, first line: `Refs #N` (never `Closes` or `Fixes`: the ticket closes when it works in main). Then 2–5 lines on what changed, and pytest's summary line.
    - Label: `needs-test`.
 
 ### "PR #M was sent back": fix it

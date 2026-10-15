@@ -54,7 +54,7 @@ act() { if [ "$DRY_RUN" = 1 ]; then echo "would: $*"; else "$@"; fi; }   # for c
 
 load_prs() {
   prs=$(gh pr list -R "$REPO" --state open --limit 100 \
-    --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup,mergeable)
+    --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup,mergeable,body)
 }
 load_prs
 load_issues() { issues=$(gh issue list -R "$REPO" --state open --limit 200 --json number,labels,createdAt,author,body); }
@@ -515,6 +515,93 @@ done < <(jq -r '.[] | select(all(.labels[]; .name != "needs-human" and .name != 
   | select($l != "") | "\(.number) \(.headRefName) \(.headRefOid) \(.mergeable) \($l)"' <<<"$prs")
 [ "$changed" = 0 ] || load_prs
 
+# ---------------------------------------------------------------- 0c. after a merge: does it work in main?
+
+# A ticket is done when its code works in main, not when its PR merges (PRs say "Refs #N", not "Closes #N").
+# For each PR merged since this check began, with a branch <agent>/<N>-..., plain checks on its merge commit:
+#   1. CI (pytest) on main is green;
+#   2. the VM deployed that commit (or a later one), and scripts/install.sh, once it exists, ran without error;
+#   3. once the app has /healthz (SPEC rule 17), the public /healthz answers 200.
+# All pass: the dispatcher closes ticket N, "works in main". One fails, or still no result 30 minutes after the merge:
+# ticket N stays open (reopened if GitHub closed it), and its builder is woken to fix it in a new PR.
+# A commit status "works-in-main" on the merge commit records each result.
+# GitHub closes an issue when a PR body says "Closes #N" (or Fixes, Resolves) and merges. Here the check closes it,
+# so the dispatcher rewrites those words in open PRs to "Refs #N".
+while read -r n; do
+  [ -n "$n" ] || continue
+  body=$(jq -r --argjson n "$n" '.[] | select(.number == $n) | .body' <<<"$prs" |
+    sed -E 's/\b([Cc]lose[sd]?|[Ff]ix(e[sd])?|[Rr]esolve[sd]?):? +#([0-9]+)/Refs #\3/g')
+  act gh pr edit "$n" -R "$REPO" --body "$body" >/dev/null
+  log "pr-$n: closing keywords rewritten to Refs (tickets close when they work in main)"
+done < <(jq -r '.[] | select((.body // "") | test("(?i)\\b(close[sd]?|fix(e[sd])?|resolve[sd]?):? +#[0-9]+")) | .number' <<<"$prs")
+
+SITE=https://dailyresearch.duckdns.org
+DEPLOY_STATUS=/var/log/daily-briefing/deploy-status.json
+mkdir -p "$STATE/merged" "$STATE/broken"
+merged=$(gh pr list -R "$REPO" --state merged --limit 50 --json number,headRefName,mergeCommit,mergedAt)
+[ -e "$STATE/merged-since" ] || [ "$DRY_RUN" = 1 ] || now > "$STATE/merged-since"   # earlier merges aren't checked
+merged_since=$(cat "$STATE/merged-since" 2>/dev/null || now)
+
+# check_main <sha>: ok | wait | failed: <what>
+check_main() {
+  local sha=$1 ci live install deployed_at code
+  ci=$(gh api "repos/$REPO/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name == "pytest")] | first
+    | if . == null or .status != "completed" then "pending" else .conclusion end' 2>/dev/null) || ci=pending
+  case $ci in
+    success) ;;
+    pending) echo wait; return ;;
+    *) echo "failed: CI (pytest) on main ended $ci for $sha"; return ;;
+  esac
+  live=$(jq -r '.sha // empty' "$DEPLOY_STATUS" 2>/dev/null) || true
+  [ -n "$live" ] && [ "$(gh api "repos/$REPO/compare/$sha...$live" --jq .behind_by 2>/dev/null)" = 0 ] ||
+    { echo wait; return; }                       # the VM hasn't deployed it yet
+  install=$(jq -r '.install' "$DEPLOY_STATUS")
+  case $install in
+    none|ok) ;;
+    *) echo "failed: scripts/install.sh on the VM $install, deploying ${live:0:7} (see /var/log/daily-briefing/deploy.log)"; return ;;
+  esac
+  if grep -rqs --include='*.py' --exclude-dir=tests healthz "$ROOT"; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$SITE/healthz") || true
+    if [ "$code" != 200 ]; then
+      deployed_at=$(date -d "$(jq -r '.time' "$DEPLOY_STATUS")" +%s)
+      [ $(( $(date +%s) - deployed_at )) -gt 600 ] || { echo wait; return; }   # give the service 10 minutes to come up
+      echo "failed: $SITE/healthz answered ${code:-nothing}, expected 200, after deploying ${live:0:7}"; return
+    fi
+  fi
+  echo ok
+}
+
+while read -r pr branch sha merged_at; do
+  [ -n "$pr" ] && [ ! -e "$STATE/merged/$pr" ] && [[ $merged_at > $merged_since ]] || continue
+  n=$(sed -nE 's#^[^/]+/([0-9]+)-.*#\1#p' <<<"$branch")
+  [ -n "$n" ] || continue                        # not a ticket's PR (a lessons PR)
+  verdict=$(check_main "$sha")
+  if [ "$verdict" = wait ] && [ $(( $(date +%s) - $(date -d "$merged_at" +%s) )) -gt 1800 ]; then
+    verdict="failed: no result 30 minutes after the merge (CI on main, or the deploy, never finished)"
+  fi
+  [ "$verdict" = wait ] && continue
+  if [ "$DRY_RUN" = 1 ]; then echo "would: pr-$pr (ticket #$n): $verdict"; continue; fi
+  state=$(gh issue view "$n" -R "$REPO" --json state --jq .state 2>/dev/null) || state=""
+  if [ "$verdict" = ok ]; then
+    gh api "repos/$REPO/statuses/$sha" -f state=success -f context=works-in-main \
+      -f description="CI green on main, deployed, health check passed" >/dev/null || true
+    msg="Works in main: PR #$pr merged as ${sha:0:7}, passed CI on main and was deployed to the VM."
+    if [ "$state" = OPEN ]; then gh issue close "$n" -R "$REPO" --comment "$msg"$'\n\n'"— dispatcher · no model" >/dev/null
+    else gh issue comment "$n" -R "$REPO" --body "$msg"$'\n\n'"— dispatcher · no model" >/dev/null; fi
+    rm -f "$STATE/broken/$n"
+    log "works in main: pr-$pr ($sha), closed #$n"
+  else
+    what=${verdict#failed: }
+    gh api "repos/$REPO/statuses/$sha" -f state=failure -f context=works-in-main -f description="${what:0:140}" >/dev/null || true
+    [ "$state" = CLOSED ] && gh issue reopen "$n" -R "$REPO" >/dev/null
+    gh issue comment "$n" -R "$REPO" --body "Doesn't work in main yet: PR #$pr merged, but $what. This ticket stays open, and its builder is woken to fix it in a new PR."$'\n\n'"— dispatcher · no model" >/dev/null || true
+    gh pr comment "$pr" -R "$REPO" --body "Dispatcher: after the merge, $what. Ticket #$n stays open."$'\n\n'"— dispatcher · no model" >/dev/null || true
+    echo "$what" > "$STATE/broken/$n"
+    log "broken in main: pr-$pr ($sha): $what; #$n back to its builder"
+  fi
+  echo "$verdict" > "$STATE/merged/$pr"
+done < <(jq -r '.[] | "\(.number) \(.headRefName) \(.mergeCommit.oid) \(.mergedAt)"' <<<"$merged")
+
 # ---------------------------------------------------------------- 1. reviewer
 
 while read -r n branch sha; do
@@ -566,8 +653,14 @@ done < <(prs_with changes-requested)
 for agent in "${BUILDERS[@]}"; do
   for n in $(issues_with "assign:$agent"); do
     has_open_pr "$agent" "$n" && continue
+    task="Issue #$n is assigned to you."
+    if jq -e --arg p "$agent/$n-" 'any(.[]; .headRefName | startswith($p))' <<<"$merged" >/dev/null; then
+      [ -e "$STATE/broken/$n" ] || continue      # merged: waits for the works-in-main check
+      task="Issue #$n is assigned to you. Its PR merged, but it doesn't work in main: $(cat "$STATE/broken/$n")
+Fix it in a new PR, on a branch $agent/$n-fix-<short-name>. If the cause isn't in your code, comment why and add needs-human."
+    fi
     cooling "$agent" && break
-    wake "$agent" "issue-$n" "Issue #$n is assigned to you."
+    wake "$agent" "issue-$n" "$task"
     exit 0
   done
 done
