@@ -24,14 +24,14 @@ flowchart TD
   T --> O
   O -->|"yes · assigned"| B
   O -->|"duplicate"| X
-  O -.->|"too big: split"| T
+  O -.->|"too big: split, once"| T
   B --> C
   B -->|"3rd send-back by one check"| H
   C -->|"yes"| TE
   C -.->|"no"| B
   TE -->|"yes · test/passed"| R
   TE -.->|"no + Lesson"| B
-  TE -.->|"other bug: new ticket"| T
+  TE -.->|"other bug: new ticket, waits for your OK"| T
   R -->|"yes · review/approved"| M
   R -.->|"no + Lesson"| B
 
@@ -49,6 +49,8 @@ flowchart TD
 
 1. **GitHub ticket.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
    `change-request`. The tester files `bug` tickets. Any agent may file `tech-debt`. Only the orchestrator assigns.
+   A ticket an agent files waits for the human's OK (`needs-approval`), unless it is the orchestrator's split of a
+   human's ticket (rule 2).
 2. **Triage** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
    ones not worth doing, with a reason. Every ticket gets Goal, Acceptance, Needs and Files likely touched.
    It adds `assign:<builder>` once the ticket's Needs are merged and that builder is free.
@@ -108,6 +110,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 | `assign:<agent>` | This agent owns the issue | Orchestrator only |
 | `bug`, `incident`, `tech-debt`, `change-request` | Kind of issue | Whoever files it |
 | `needs-human` | Stuck. Waits for the human | Any agent, or the dispatcher |
+| `needs-approval` | Not filed by the human or split from their ticket. Nobody works on it until the human removes the label | Dispatcher only |
 | `rate-limit` | An agent can't reach any of its models. Not work: agents leave these issues alone | Dispatcher only |
 
 **Pull requests.** A PR has exactly one of the first four at a time. Whoever adds one removes the previous one.
@@ -134,12 +137,16 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
   A new push clears both, so every fix is tested and reviewed again. `main` only accepts a PR with both, plus green CI, merged by the human.
   A tester's own PR can't be tested by the tester: the dispatcher sets its `test/passed` to "not self-tested" and sends it to the reviewer.
   A `lessons` PR only changes `agents/LESSONS.md`; the human reviews and merges it without the agent gates.
-- **Issues from the orchestrator** have four parts: Goal, Acceptance (checkable bullets), Needs (`#n` or none), Files likely touched.
+- **Issues from the orchestrator** start with `Part of #N` (the ticket it split), then four parts: Goal, Acceptance
+  (checkable bullets), Needs (`#n` or none), Files likely touched.
 
 ## Rules
 
 1. **GitHub is the only channel.** Agents never call each other. Everything is an issue, a PR, a label, a comment or a status.
 2. **Only the orchestrator assigns issues.** Other agents may file issues, but leave them unassigned.
+   All work traces back to the human: a ticket the human filed, or the orchestrator's split of one (split once, never
+   a split of a split). Every other ticket, from an agent or a stranger, gets `needs-approval` from the dispatcher
+   and waits until the human removes the label.
 3. **Nobody checks their own work.** Builders never test, review or merge their own PRs. The tester and reviewer never change `app/`.
    The tester may write tests and fixtures in its own PRs; those skip the tester step and go straight to review.
 4. **Every send-back ends with one line:** `Lesson: <one general rule>`, for example `Lesson: compare stable arXiv IDs, never titles.`

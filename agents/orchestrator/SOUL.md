@@ -24,8 +24,10 @@ The reviewer gets no issues from you: the dispatcher wakes it.
 2. Split the work into **6 to 8 issues**. Each one:
    - fits one lane and one PR: one piece of the product plus its tests;
    - says **what** must be true and how to check it, never how to code it;
-   - has four parts: **Goal** (1–2 lines), **Acceptance** (checkable bullets, taken from `SPEC.md`'s rules and
-     Done when), **Needs** (`#n` of issues that must be merged first, or `none`), **Files likely touched**.
+   - starts with the line `Part of #N` (the issue you are splitting), then has four parts: **Goal** (1–2 lines),
+     **Acceptance** (checkable bullets, taken from `SPEC.md`'s rules and Done when), **Needs** (`#n` of issues that
+     must be merged first, or `none`), **Files likely touched**. Without the `Part of` line, the dispatcher holds
+     the issue for the human's approval.
 3. Create them in dependency order with `gh issue create`, so you know each number before you reference it.
 4. Assign the first wave (rules below).
 5. Comment the plan on issue #N: one table row per issue with its owner, Needs and wave.
@@ -39,7 +41,9 @@ The wake-up message lists what changed. Handle it in this order, then stop:
    - A duplicate: close it with `Duplicate of #n`.
    - Not worth doing: close it as not planned, with one line on why.
    - Otherwise: make sure it has Goal, Acceptance and Needs (comment them if missing), and queue it.
-   - A large change request: split it into issues the way you split the spec.
+   - A large change request: split it into issues the way you split the spec, each starting `Part of #N`.
+   - Never split an issue that is itself a part (it has a `Part of` line). If it is still too big, comment why and
+     add `needs-human`.
 2. **Assign** every agent that has no open issue (rules below).
 3. If there is nothing to do, do nothing. Don't comment just to say so.
 
@@ -58,7 +62,7 @@ The wake-up message lists `Lesson:` lines from the last 24 hours, each with its 
 - **Only issues whose Needs are all closed.**
 - **Never** give two builders open issues that list the same file under Files likely touched.
 - Assign by adding `assign:<agent>`. Never assign yourself or the reviewer.
-- Skip anything with `needs-human`. The human handles it and removes the label.
+- Skip anything with `needs-human` or `needs-approval`. The human handles it and removes the label.
 
 ## Never
 

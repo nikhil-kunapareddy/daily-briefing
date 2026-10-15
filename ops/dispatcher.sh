@@ -9,6 +9,8 @@
 set -euo pipefail
 
 REPO=nikhil-kunapareddy/daily-briefing
+OWNER=${REPO%%/*}                              # the human: tickets they file are work
+BOT=nikhil-gbot                                # the agents' (and the dispatcher's) shared GitHub account
 ROOT=/srv/daily-briefing                       # main-only checkout: prompts, lessons, this script
 WORK=/home/agents/work
 STATE=$WORK/.dispatcher
@@ -35,7 +37,8 @@ act() { if [ "$DRY_RUN" = 1 ]; then echo "would: $*"; else "$@"; fi; }   # for c
 
 prs=$(gh pr list -R "$REPO" --state open --limit 100 \
   --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup)
-issues=$(gh issue list -R "$REPO" --state open --limit 200 --json number,labels,createdAt)
+load_issues() { issues=$(gh issue list -R "$REPO" --state open --limit 200 --json number,labels,createdAt,author,body); }
+load_issues
 
 # Open PRs with label $1 and without needs-human, oldest first: "number branch sha" per line.
 prs_with() {
@@ -43,9 +46,10 @@ prs_with() {
     | sort_by(.createdAt)[] | "\(.number) \(.headRefName) \(.headRefOid)"' <<<"$prs"
 }
 
-# Open issues with label $1 and without needs-human, oldest first: one number per line.
+# Open issues with label $1 and without needs-human or needs-approval, oldest first: one number per line.
 issues_with() {
-  jq -r --arg l "$1" '[.[] | select(any(.labels[]; .name == $l)) | select(all(.labels[]; .name != "needs-human"))]
+  jq -r --arg l "$1" '[.[] | select(any(.labels[]; .name == $l))
+    | select(all(.labels[]; .name != "needs-human" and .name != "needs-approval"))]
     | sort_by(.createdAt)[] | .number' <<<"$issues"
 }
 
@@ -211,7 +215,7 @@ new_lessons() {
   since=$(gh pr list -R "$REPO" --state merged --label lessons --limit 1 --json createdAt --jq '.[0].createdAt // empty' 2>/dev/null) || true
   [ -n "$since" ] || since=$(date -u -d '7 days ago' +%FT%TZ)
   gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
-    --jq '.[] | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"' 2>/dev/null \
+    --jq '.[] | select(.user.login == "'"$BOT"'") | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"' 2>/dev/null \
     | grep -v -F -f <(grep -oE 'https://github\.com/[^ )]+' "$ROOT/agents/LESSONS.md") | tail -10 || true
 }
 
@@ -387,6 +391,37 @@ recovered() {
   log "recovered $1, closed #${issue:-?}"
 }
 
+# ---------------------------------------------------------------- 0. tickets the human didn't ask for
+
+# Work must trace back to the human, so agents can't create work for each other without end.
+# Work is a ticket the human (the repo owner) filed, or a split of one: a ticket by the agents' account with a line
+# "Part of #N" and the orchestrator's signature, where the human filed #N. Anything else gets needs-approval and waits:
+# a tester's bug, tech-debt, a split of a split, an issue from a stranger on the public repo. The human removes the
+# label to let the team work on it, or closes the issue. Each issue is checked once (gated/<n>), so a removed label
+# stays removed.
+mkdir -p "$STATE/gated"
+owner_issues=$(gh issue list -R "$REPO" --state all --author "$OWNER" --limit 300 --json number --jq '[.[].number]')
+gated=0
+while read -r n author parent; do
+  [ -n "$n" ] && [ ! -e "$STATE/gated/$n" ] || continue
+  if [ "$author" = "$OWNER" ] ||
+     { [ "$author" = "$BOT" ] && [ -n "$parent" ] && jq -e --argjson p "$parent" 'index($p)' <<<"$owner_issues" >/dev/null; }; then
+    [ "$DRY_RUN" = 1 ] || echo work > "$STATE/gated/$n"
+    continue
+  fi
+  act gh issue edit "$n" -R "$REPO" --add-label needs-approval >/dev/null
+  act gh issue comment "$n" -R "$REPO" --body "Dispatcher: this ticket wasn't filed by the human or split from one of their tickets, so it waits for the human's OK. To let the team work on it, remove \`needs-approval\`. Otherwise close it.
+
+— dispatcher · no model" >/dev/null
+  [ "$DRY_RUN" = 1 ] || echo needs-approval > "$STATE/gated/$n"
+  log "needs-approval #$n (filed by $author${parent:+, part of #$parent})"
+  gated=1
+done < <(jq -r '.[] | select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval"))
+  | (.body // "") as $b | [.number, .author.login,
+      (if $b | test("— orchestrator · ") then ($b | capture("(?im)^[^a-z0-9#]*part of[^#\\n]*#(?<p>[0-9]+)").p // "") else "" end)]
+  | @tsv' <<<"$issues")
+[ "$gated" = 0 ] || load_issues                 # an agent may have assigned it in the same run it filed it
+
 # ---------------------------------------------------------------- 1. reviewer
 
 while read -r n branch sha; do
@@ -453,7 +488,7 @@ today=$(date -u +%F)
 if [ "$(cat "$STATE/lessons-day" 2>/dev/null)" != "$today" ] && [ -z "$(prs_with lessons)" ] && ! cooling orchestrator; then
   since=$(cat "$STATE/lessons-since" 2>/dev/null || date -u -d '1 day ago' +%FT%TZ)
   lessons=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
-    --jq '.[] | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"')
+    --jq '.[] | select(.user.login == "'"$BOT"'") | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"')
   if [ "$DRY_RUN" != 1 ]; then echo "$today" > "$STATE/lessons-day"; now > "$STATE/lessons-since"; fi
   if [ -n "$lessons" ]; then
     wake orchestrator lessons "Collect lessons. These Lesson: lines were posted since $since:
@@ -464,10 +499,11 @@ fi
 
 # ---------------------------------------------------------------- 5. orchestrator: the board
 
-# The board leaves out rate-limit issues: the dispatcher files them for the human, and they are not work for agents.
+# The board leaves out rate-limit issues (the dispatcher's, for the human) and issues waiting for the human's OK.
+# When the human removes needs-approval, the issue shows up as new, and the orchestrator triages it.
 board() {
   gh issue list -R "$REPO" --state all --limit 300 --json number,state,labels \
-    --jq 'map(select(all(.labels[]; .name != "rate-limit")))
+    --jq 'map(select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval")))
       | map({n: .number, s: .state, l: ([.labels[].name] | sort)}) | sort_by(.n)'
 }
 save_board() { [ "$DRY_RUN" = 1 ] || board > "$STATE/board.json"; }

@@ -30,6 +30,7 @@ CI's pytest has already passed. Your job is to check behaviour from the outside.
      Swap the label to `changes-requested`.
 6. A problem that this PR didn't cause (it was already on `main`): don't block the PR for it.
    File a `bug` issue with the command, the output and the expected result. Leave it unassigned.
+   It waits for the human's approval (`needs-approval`) before anyone works on it.
 
 ### "Issue #N is assigned to you": write tests or fixtures
 
