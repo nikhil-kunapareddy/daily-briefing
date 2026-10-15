@@ -82,12 +82,18 @@ All models are on free plans: Ollama Cloud for most agents, the Gemini API for t
 Neither check on a PR uses the builders' model family (OpenAI): the tester runs the code, the reviewer (Google) reads it.
 The reviewer also differs from the orchestrator (NVIDIA), so it doesn't share the orchestrator's reading of the spec.
 
-Fallbacks, used when a model is rate-limited or down:
-- **Builders:** `nemotron-3-ultra` on Ollama, then `gemini-2.5-flash`.
-- **Tester:** `gemini-2.5-flash`, then `nemotron-3-ultra` (free) on OpenRouter.
-- **Orchestrator:** `nemotron-3-ultra` on OpenRouter, then `gemini-2.5-flash`.
-- **Reviewer:** `gemini-3.5-flash-lite`, then `gemma4:31b` on Ollama. All three are Google models, so a fallback
-  never reviews with the builders' model family.
+Models and fallbacks, used when a model is rate-limited or down:
+
+| Agent | Main model | 1st backup | 2nd backup |
+|---|---|---|---|
+| orchestrator | `nemotron-3-ultra` (Ollama) | `nemotron-3-ultra:free` (OpenRouter) | `gemini-2.5-flash` (Gemini API) |
+| builder-ingest, builder-web, builder-ops | `gpt-oss:120b` (Ollama) | `nemotron-3-ultra` (Ollama) | `gemini-2.5-flash` (Gemini API) |
+| tester | `gemma4:31b` (Ollama) | `gemini-2.5-flash` (Gemini API) | `nemotron-3-ultra:free` (OpenRouter) |
+| reviewer | `gemini-2.5-flash` (Gemini API) | `gemini-3.5-flash-lite` (Gemini API) | `gemma4:31b` (Ollama) |
+
+- After a failed run, the dispatcher retries it once on the **1st backup**.
+- The runtime falls back on its own (1st, then 2nd backup) when a model is rate-limited or down.
+- All three reviewer models are Google, so a fallback never reviews with the builders' model family.
 
 The dispatcher logs the model and token counts of every run (`runs.jsonl` on the VM).
 
