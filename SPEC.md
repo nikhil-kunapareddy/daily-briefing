@@ -15,6 +15,39 @@ systems), saves every run, and shows what is new since the last run.
 - **Public page:** the latest briefing at the top, the run history below. No login.
 - **Run now:** a button on the page that starts a run, rate-limited.
 
+**How a run works** (rule numbers in brackets). Both cron jobs are here: the app's 02:00 job, and the deploy check
+that installs each merge.
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+flowchart TD
+  CR["<b>02:00 UTC</b> · app's crontab<br/>python -m app.job"]
+  RN["<b>Run now</b> · POST /run-now<br/>rate limit + new row, one transaction (16)"]
+  JR["app.job.run(run_id), inside the request (15)"]
+  LK{{"run.lock free? (8)"}}
+  RQ["1 arXiv request: the 5 newest submissions,<br/>3 s after the last request, with a User-Agent (9)"]
+  OK{{"usable response? (6)"}}
+  F(["failed run: nothing marked seen, 0 new (6)"])
+  NW["new = stable ID never seen (1–4)<br/>save the papers this run saw (7)"]
+  SV(["run saved: time · ✓ or ✗ · trigger · seen · new · error (5)"])
+  PG["the page reads it through app/db.py (10–12)"]
+
+  CR --> LK
+  RN --> JR --> LK
+  LK -->|"yes"| RQ
+  LK -.->|"busy: wait for the other run"| LK
+  RQ --> OK
+  OK -->|"yes"| NW --> SV
+  OK -->|"no: error, over 10 s, non-200, unparseable,<br/>no entries, or arXiv's error entry"| F --> SV
+  SV --> PG
+
+  subgraph DEP["Every 2 min · ops/deploy.sh, after a merge to main"]
+    direction LR
+    D1["pull main"] --> D2["scripts/install.sh: back up the database, venv and<br/>dependencies, restart the service, one 02:00 crontab line"]
+  end
+  PG ~~~ DEP
+```
+
 ## Stack
 
 - **Python 3.12.** Dependencies pinned with exact versions in `requirements.txt`.
@@ -111,37 +144,12 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
   `finish_run(run_id, error=None)`. Tests in any lane fill a test database only through these, never with their own SQL.
 - gunicorn serves `app.web:create_app()`. Settings come from `app/config.py` only.
 
-**How the agents build it.** You file one plan ticket; the orchestrator splits and assigns; every ticket then goes
-through the same path (`agents/WORKFLOW.md`). The numbers are the waves.
-
-```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
-flowchart TD
-  U["<b>You</b> · file the plan ticket: Plan the build from SPEC.md"]
-  O["<b>orchestrator</b> · splits SPEC.md along the Code layout into tickets,<br/>assigns each once its Needs are closed and its builder is free"]
-  subgraph WAVES["The tickets, in waves"]
-    W1["<b>1 · builder-ingest</b><br/>config · db · requirements.txt"]
-    W2["<b>2 · tester</b> fixture · <b>builder-ops</b> install.sh"]
-    W3["<b>3 · builder-ingest</b> arxiv · job<br/><b>builder-web</b> page · history"]
-    W4["<b>4 · builder-web</b><br/>Run now · rate limit · /healthz"]
-    W5["<b>5 · tester</b><br/>behaviour tests across the lanes"]
-    W1 ~~~ W2
-    W1 --> W3 --> W4 --> W5
-    W2 --> W5
-  end
-  subgraph EACH["Every ticket goes through this (the tester's own PRs skip the tester, not CI)"]
-    direction LR
-    E1["builder · PR"] --> E2{{"CI"}} --> E3{{"tester"}} --> E4{{"reviewer"}} --> E5["you merge"] --> E6{{"works in main?"}}
-  end
-  V(["<b>v1 live</b> · Done when"])
-  U --> O -->|"assigns"| WAVES
-  WAVES -.- EACH
-  EACH -.->|"ticket closed: the next Needs are met"| O
-  E2 -.->|"no"| E1
-  E3 -.->|"no + Lesson"| E1
-  E4 -.->|"no + Lesson"| E1
-  W5 --> V
-```
+**A sensible order** (the orchestrator decides; Needs go by this):
+1. builder-ingest: `config`, `db` with the schema and the functions above, `requirements.txt`.
+2. tester: `fixtures/arxiv_sample.xml`. builder-ops: `scripts/install.sh` (needs only the names above).
+3. builder-ingest: `arxiv` and `job` (needs 1). builder-web: the page and the history (needs 1).
+4. builder-web: Run now, its rate limit, and `/healthz` (needs 3).
+5. tester: behaviour tests across the lanes on the fixture: the job twice, the page, Run now (needs 3 and 4).
 
 ## Done when
 
