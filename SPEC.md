@@ -112,8 +112,9 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 **Run now** (`POST /run-now`)
 15. Starts a run with trigger "manual" and goes straight back to the page (rule 27), which shows the run in progress
     and then its new row.
-16. Rate limit: at most **one manual run every 10 minutes**, for everyone together, worked out from the saved runs.
-    Pressed too soon, the page says "Try again in N min" and no run starts.
+16. Rate limit: at most **one manual run every 10 minutes**, and at most **20 manual runs per UTC day**, for everyone
+    together, worked out from the saved runs. Pressed too soon, the page says "Try again in N min"; after the 20th
+    of the day, "Run now is used up for today. The next run is at 02:00 UTC." Either way, no run starts.
 
 **Health** (`GET /healthz`)
 17. Answers `200` with JSON when the app can read its database: the latest run's time and status. Otherwise `503`.
@@ -122,8 +123,9 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 18. After a run's checks, the job asks **`gemini-2.5-flash`** for one sentence per new paper, from its abstract only:
     what the paper does or finds, in plain words, at most 30 words, starting with the verb ("Proposes", "Shows",
     "Measures"), never with "This paper". **One request per run** for all its new papers
-    (at most 25; any more wait for the next run), with a 30-second timeout:
-    `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`, with the key in
+    (at most 25; any more wait for the next run), with a 30-second timeout. **A run with no new papers, and none
+    waiting for a retry (rule 19), makes no model request at all**, so pressing Run now can't use up the allowance.
+    The request: `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`, with the key in
     the header `x-goog-api-key`, asking for JSON (`generationConfig.responseMimeType: application/json`) with thinking
     off (`generationConfig.thinkingConfig.thinkingBudget: 0`; with it on, a test call spent 286 thinking tokens on a
     48-token answer). The key is `GEMINI_API_KEY` in `/home/app/.env`: readable only by `app`, put there
@@ -180,7 +182,7 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 25. **Style.** One column, at most 760px wide, 16px side margins. The system font. One stylesheet served by the app,
     `/static/style.css`; no JavaScript, no CDN, no web fonts, no images. Light or dark from the visitor's system
     setting. One accent colour for links and the Run now button; titles bold; the summary smaller and grey, its
-    label ("AI summary:") in bold; DOIs in a monospace font; no-submissions and "Try again" lines as a pale yellow
+    label ("AI summary:") in bold; DOIs in a monospace font; no-submissions, "Try again" and "used up for today" lines as a pale yellow
     note with a darker left border; ✓ green, ✗ red.
 26. **Only the states that apply are shown.** No example, demo, legend or placeholder sections.
 
@@ -236,7 +238,7 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
   when it was last checked), `dates_without_papers(after)` (each with "open" or "closed"), `latest_runs(limit)`,
   `runs_page(page, per_page)`, `runs_for_date(date)`, `current_run()` (the run in progress, or none), `health()`.
 - Run now calls `start_manual_run()` in `app/db.py`: the rate-limit check and the new "running" row in one
-  transaction. It returns the new run's id, or how many minutes to wait. Then the web side starts
+  transaction. It returns the new run's id, how many minutes to wait, or that today's 20 are used up. Then the web side starts
   `python -m app.job --run-id <id>` in its own process (rule 27). The schedule runs `python -m app.job`.
 - gunicorn serves `app.web:create_app()` on `127.0.0.1:8000`.
 - The job writes **only** through these functions in `app/db.py`: `start_run(trigger)` (returns the run's id),
@@ -283,7 +285,8 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
    - summaries: one model request per run covers all its new papers; the model's sentence shows as "AI summary:";
      a model error, a timeout or a missing key gives "From the abstract:" and the first sentence, the run still
      succeeds, and the paper is asked about again on the next run;
-   - the Run now rate limit;
+   - the Run now rate limit: 10 minutes between manual runs and 20 per UTC day, with the two messages;
+   - a run with no new papers makes no model request;
    - `/healthz`;
    - Run now returns at once and starts the run in its own process (tests use a fake starter); two presses at the same
      moment start one run; two runs never overlap (the lock); a run still running after 15 minutes shows as failed;
