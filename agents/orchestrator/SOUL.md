@@ -21,8 +21,11 @@ The reviewer gets no issues from you: the dispatcher wakes it.
 ### "Issue #N is assigned to you": usually "Plan the build from SPEC.md"
 
 1. Read `SPEC.md` in full, and the issue.
-2. Split the work into **6 to 8 issues**. Each one:
-   - fits one lane and one PR: one piece of the product plus its tests;
+2. Split the work into **6 to 8 issues**, along `SPEC.md`'s **Code layout**: its lanes, its touch points and its
+   suggested order. Each one:
+   - fits one lane and one PR: one piece of the product plus its tests, only in that lane's files;
+   - takes **Files likely touched** from the Code layout table, and names the `SPEC.md` rules it covers
+     (for example "rules 21–26"), so the tester and reviewer check exactly those;
    - says **what** must be true and how to check it, never how to code it;
    - starts with the line `Part of #N` (the issue you are splitting), then has four parts: **Goal** (1–2 lines),
      **Acceptance** (checkable bullets, taken from `SPEC.md`'s rules and Done when), **Needs** (`#n` of issues that

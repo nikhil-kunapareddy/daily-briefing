@@ -102,7 +102,7 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
       "No new submissions on Fri 16 Oct." once it isn't.
     - Under the heading, when the page was last checked: "Last checked 02:00 UTC". When that run found nothing new:
       "Last checked 14:32 UTC: no new submissions since the run before."
-12. **Run history** below: one row per run, newest first, with the time (UTC), ✓ or ✗, schedule or Run now,
+12. **Run history** below (how many: rule 23): one row per run, newest first, with the time (UTC), ✓ or ✗, schedule or Run now,
     the dates it checked, and the new count ("no new submissions" instead of 0). A failed row shows its error in short.
     Each date links to that date's briefing, `GET /?date=YYYY-MM-DD`: the same table, or its no-submissions line.
 13. Readable on a phone. Times are shown in UTC and say so.
@@ -118,7 +118,8 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 
 **Summaries** (one model call per run)
 18. After a run's checks, the job asks **`gemini-2.5-flash`** for one sentence per new paper, from its abstract only:
-    what the paper does or finds, in plain words, at most 30 words. **One request per run** for all its new papers
+    what the paper does or finds, in plain words, at most 30 words, starting with the verb ("Proposes", "Shows",
+    "Measures"), never with "This paper". **One request per run** for all its new papers
     (at most 25; any more wait for the next run), with a 30-second timeout:
     `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`, with the key in
     the header `x-goog-api-key`, asking for JSON (`generationConfig.responseMimeType: application/json`) with thinking
@@ -132,11 +133,94 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 20. Each summary is saved with where it came from: the model's name, or "first sentence". The page labels it
     "AI summary:" or "From the abstract:", so nobody mistakes model text for the authors'.
 
+**Page layout** (the human approved this look from a mockup; build it from these words, not from any HTML)
+21. **Top to bottom**, and nothing else:
+
+    ```
+    Daily Briefing                                              [ Run now ]
+    New papers in arXiv cs.MA (multi-agent systems),    At most once every 10 minutes
+    every day at 02:00 UTC
+    ───────────────────────────────────────────────────────────────────────
+    [← Tue 13 Oct]          Go to [ 2026-10-14 ] [Go]          [Thu 15 Oct →]
+
+    ▌No new submissions for Sat 17 Oct yet. arXiv announces …   (only if such a date exists, rule 11)
+
+    Wed 14 Oct 2026                                    Back to the latest  (only on an older date)
+    The 5 newest of 17 submissions · Last checked 14:32 UTC: no new submissions since the run before.
+    ┌──────┬────────────────────────────────────────────┬───────────────────────────┬─────┐
+    │ S.NO │ TITLE                                      │ DOI                       │ PDF │
+    │ 1    │ The Wealth of Agents: Scaling Agentic AI … │ 10.48550/arXiv.2610.20518 │ PDF │
+    │      │ AI summary: Studies multi-developer …      │                           │     │
+    └──────┴────────────────────────────────────────────┴───────────────────────────┴─────┘
+
+    Run history
+    All times UTC. Each date opens that day's briefing.
+    TIME            ✓/✗   TRIGGER    DATES CHECKED            RESULT
+    15 Oct, 14:32   ✓     Run now    Wed 14 Oct               no new submissions
+    …the newest 10…                                                     All runs →
+    ───────────────────────────────────────────────────────────────────────
+    Thank you to arXiv for use of its open access interoperability. · Source: the arXiv API · /healthz
+    ```
+    The line under the heading is "The 5 newest of N submissions" (N is arXiv's `totalResults` for that date),
+    then "Last checked …" on the latest date, or "Checked on 15 Oct, 01:12 UTC" on an older one.
+22. **Moving between days.** "← <the day before>" and "<the day after> →" each step one day. They are greyed out and
+    not links before 2026-10-13 and after yesterday. Between them, a date picker that is a plain GET form
+    (`<input type="date" name="date">`, from 2026-10-13 to yesterday) with a Go button. `GET /?date=` with a date
+    outside that range, or not a date, answers `404` with one line and a link to the latest briefing.
+23. **Run history.** The main page shows the newest 10 runs, then "All runs →" to `GET /runs`: every run, 50 per page
+    (`/runs?page=2`), with "← Newer" and "Older →". A date's page shows only the runs that checked that date.
+24. **Narrow screens** (600px wide or less): the table's header row hides, and each paper's DOI and PDF link sit on
+    one line under its summary. Each run history row becomes a small card: time, ✓/✗, trigger and dates on one line,
+    the result under it. Nothing scrolls sideways.
+25. **Style.** One column, at most 760px wide, 16px side margins. The system font. One stylesheet served by the app,
+    `/static/style.css`; no JavaScript, no CDN, no web fonts, no images. Light or dark from the visitor's system
+    setting. One accent colour for links and the Run now button; titles bold; the summary smaller and grey, its
+    label ("AI summary:") in bold; DOIs in a monospace font; no-submissions and "Try again" lines as a pale yellow
+    note with a darker left border; ✓ green, ✗ red.
+26. **Only the states that apply are shown.** No example, demo, legend or placeholder sections.
+
+## Code layout
+
+Which files belong to which builder, so the three can work at the same time without colliding. The orchestrator
+splits the work along these lanes and takes each ticket's "Files likely touched" from this table.
+
+| Path | Lane | What it holds |
+|---|---|---|
+| `app/__init__.py` | builder-ingest | Empty: makes `app` a package |
+| `app/config.py` | builder-ingest | The one place for settings: data folder (`DAILY_BRIEFING_DATA`), start date 2026-10-13, arXiv URL and User-Agent, model name, timeouts |
+| `app/db.py` | builder-ingest | The schema, the connection (WAL, foreign keys), and **all** SQL, including the read functions below |
+| `app/arxiv.py` | builder-ingest | The query for one date, the request, and parsing entries (rules 7 and 8) |
+| `app/summaries.py` | builder-ingest | The one Gemini request per run and the first-sentence fallback (rules 18–20) |
+| `app/job.py` | builder-ingest | One run: which dates are open, their checks, saving, then summaries (rules 2–9) |
+| `app/web.py` | builder-web | `create_app()` and the routes: `/`, `/?date=`, `/runs`, `POST /run-now`, `/healthz` |
+| `app/templates/` | builder-web | Jinja templates: `base.html`, `index.html`, `runs.html`, `404.html` |
+| `app/static/style.css` | builder-web | The one stylesheet (rule 25) |
+| `scripts/install.sh` | builder-ops | Install, backup, the service and the crontab line (Stack, Install) |
+| `requirements.txt` | builder-ingest | Pinned dependencies. Another lane that needs a package asks for it in its PR |
+| `tests/test_<module>.py` | that module's lane | Unit tests, next to the code they test |
+| `tests/test_behaviour_*.py`, `fixtures/` | tester | Behaviour tests and the saved arXiv response |
+
+**Touch points between lanes** (fixed here, so nobody has to wait to learn a name):
+- The web side reads data **only** through these functions in `app/db.py`, never with its own SQL. Each returns
+  plain dicts and lists: `latest_date_with_papers()`, `briefing(date)` (the date's papers in order, `totalResults`,
+  when it was last checked), `dates_without_papers(after)` (each with "open" or "closed"), `latest_runs(limit)`,
+  `runs_page(page, per_page)`, `runs_for_date(date)`, `last_manual_run_time()`, `health()`.
+- Run now calls `app.job.run(trigger="manual")`. The schedule runs `python -m app.job` (trigger "schedule").
+- gunicorn serves `app.web:create_app()` on `127.0.0.1:8000`.
+- Settings come from `app/config.py` only.
+
+**A sensible order** (the orchestrator decides; Needs go by this):
+1. builder-ingest: `config`, `db` with the schema and the read functions, `requirements.txt`.
+2. tester: `fixtures/arxiv_sample.xml` (no Needs). builder-ops: `scripts/install.sh` (needs only the names above).
+3. builder-ingest: `arxiv` and `job`, with open dates (needs 1). builder-web: the page, day navigation, history and
+   `/runs` (needs 1).
+4. builder-ingest: `summaries` (needs 3). builder-web: Run now, its rate limit, and `/healthz` (needs 3).
+
 ## Done when
 
 1. `https://dailyresearch.duckdns.org` shows the latest briefing (at most 5 papers, each with S.No, title and its
-   summary, DOI and PDF link) and the run history, and every date from 2026-10-13 has a briefing or a
-   no-submissions line.
+   summary, DOI and PDF link) and the run history, laid out as rules 21–26 say, and every date from 2026-10-13 has
+   a briefing or a no-submissions line, reachable with the day arrows and the date picker.
 2. The history has at least 3 real runs: the first checked every date from 2026-10-13, and one found no new
    submissions (Run now right after another run).
 3. Run now adds a row. A second press within 10 minutes shows "Try again in N min" and adds no row.
@@ -158,4 +242,7 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
      a model error, a timeout or a missing key gives "From the abstract:" and the first sentence, the run still
      succeeds, and the paper is asked about again on the next run;
    - the Run now rate limit;
-   - `/healthz`.
+   - `/healthz`;
+   - day navigation: the arrows stop at 2026-10-13 and at yesterday, and `/?date=` outside that range answers `404`;
+   - run history: 10 runs on the main page, 50 per page on `/runs`, and a date's page lists only the runs that
+     checked it.

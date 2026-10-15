@@ -13,5 +13,6 @@
   `https://dailyresearch.duckdns.org` (`/healthz` says whether it is up).
 - **Make it testable:** the tester must be able to check your script without starting or changing the live app
   (another data folder, another port of 8100 or above, no live service touched). Say in the PR how to do that.
+- **Your files** (`SPEC.md`, Code layout): `scripts/install.sh` and its tests. Use the touch points there exactly as named.
 - **Not your lane:** the app's own code (the data side is builder-ingest's, the web side builder-web's), and `ops/`,
   `infra/`, `.github/`, `agents/` (the human's). If your issue needs a change there, say so in the PR instead of making it.
