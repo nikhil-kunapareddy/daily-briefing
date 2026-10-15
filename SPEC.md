@@ -50,7 +50,7 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 2. A paper is **new** in a run when its stable ID was never seen in an earlier successful run.
    - A new version of a paper already seen (v2 after v1) is **not** new.
    - A later version of a paper never seen before (a v3 seen for the first time) **is** new.
-   - On the very first run, everything is new.
+   - On the very first run, everything is new, and the page says so (rule 21).
 3. This comparison is plain code. No model decides what is new. The one model call writes summary sentences
    (rule 18) and nothing else: it never changes what is new, saved or shown.
 4. Every paper the query returns counts, including ones cross-listed from another category.
@@ -128,9 +128,9 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
     off (`generationConfig.thinkingConfig.thinkingBudget: 0`; with it on, a test call spent 286 thinking tokens on a
     48-token answer). The key is `GEMINI_API_KEY` in `/home/app/.env`: readable only by `app`, put there
     by the human's setup, never in the repo. The web service and the cron job both load it.
-19. **A summary never breaks a run.** If the request fails or times out, the key is missing, or a sentence is missing
-    or longer than 40 words, that paper shows its abstract's first sentence instead (at most 250 characters), and the
-    run's result doesn't change. A paper without an AI summary is asked about again on the next 3 runs, then keeps
+19. **A summary never breaks a run.** If the request fails or times out (quota errors, HTTP 402 or 429, included),
+    the key is missing, or a sentence is missing or longer than 40 words, that paper shows its abstract's first
+    sentence instead (at most 250 characters), and the run's result doesn't change. A paper without an AI summary is asked about again on the next 3 runs, then keeps
     the first sentence.
 20. Each summary is saved with where it came from: the model's name, or "first sentence". The page labels it
     "AI summary:" or "From the abstract:", so nobody mistakes model text for the authors'.
@@ -148,7 +148,7 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
     ▌No new submissions for Sat 17 Oct yet. arXiv announces …   (only if such a date exists, rule 11)
 
     Wed 14 Oct 2026                                    Back to the latest  (only on an older date)
-    The 5 newest of 17 submissions · Last checked 14:32 UTC: no new submissions since the run before.
+    5 new · the newest of 17 submissions that day · Last checked 14:32 UTC: no new submissions since the run before.
     ┌──────┬────────────────────────────────────────────┬───────────────────────────┬─────┐
     │ S.NO │ TITLE                                      │ DOI                       │ PDF │
     │ 1    │ The Wealth of Agents: Scaling Agentic AI … │ 10.48550/arXiv.2610.20518 │ PDF │
@@ -163,8 +163,11 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
     ───────────────────────────────────────────────────────────────────────
     Thank you to arXiv for use of its open access interoperability. · Source: the arXiv API · /healthz
     ```
-    The line under the heading is "The 5 newest of N submissions" (N is arXiv's `totalResults` for that date),
-    then "Last checked …" on the latest date, or "Checked on 15 Oct, 01:12 UTC" on an older one.
+    The line under the heading says **how many papers are new** first: "5 new · the newest of 17 submissions that
+    day" (17 is arXiv's `totalResults` for that date), then "Last checked …" on the latest date, or "Checked on
+    15 Oct, 01:12 UTC" on an older one. **While the first run is the only run that found papers**, the line starts
+    "First run: everything is new" instead of "5 new", and the first run's history row says "first run: everything
+    is new".
 22. **Moving between days.** "← <the day before>" and "<the day after> →" each step one day. They are greyed out and
     not links before 2026-10-13 and after yesterday. Between them, a date picker that is a plain GET form
     (`<input type="date" name="date">`, from 2026-10-13 to yesterday) with a Go button. `GET /?date=` with a date
@@ -265,7 +268,8 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
 4. The 02:00 UTC schedule is installed, and `scripts/install.sh` can be run twice in a row without errors or duplicates.
    Each run of it leaves a database backup, and never more than 10.
 5. `python -m pytest` passes in CI, and the tests cover at least:
-   - the same fixture run twice: the second run has 0 new, and the page says "no new submissions";
+   - the same fixture run twice: the first run's page says "First run: everything is new"; the second run has 0 new,
+     and the page says "no new submissions";
    - the version rule: `…v1` then `…v2` is not new, a first-seen `…v3` is new;
    - a failed fetch is saved as a failed run and its date stays open; an empty response is a successful check
      with no papers, shown as a no-submissions line;
