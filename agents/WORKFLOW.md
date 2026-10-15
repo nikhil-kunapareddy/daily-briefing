@@ -203,5 +203,7 @@ What the team has learned from rejections, so the same mistake isn't made twice.
    and wakes the orchestrator with them. It skips this while a `lessons` PR is still open.
 3. The orchestrator merges them into `agents/LESSONS.md`: no duplicates, at most 20 lines, each with a link to its PR.
    It opens a PR labelled `lessons`.
-4. The human merges it. No lesson reaches the agents without review.
-5. The dispatcher puts `LESSONS.md` into every builder's wake-up message.
+4. The human merges it. Only merged lessons stay in the file.
+5. The dispatcher puts `LESSONS.md` into every agent's wake-up message. Lessons posted since the last merge come with it
+   at once, marked "not reviewed yet" (the newest 10), so the next agent learns them before the daily collection.
+   Follow one of those only where it fits your task.

@@ -107,7 +107,7 @@ comment() { act gh pr comment "$1" -R "$REPO" --body "$2"$'\n\n'"— dispatcher 
 # wake <agent> <key> <task line>. key names the issue or PR, e.g. pr-12, issue-7, board.
 wake() {
   local agent=$1 key=$2 task=$3
-  local stamp msg out rc start secs usage before model backup=""
+  local stamp msg out rc start secs usage before model fresh backup=""
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   msg=$STATE/runs/$stamp-$agent-$key.msg.md
   out=$STATE/runs/$stamp-$agent-$key.out       # stdout: the runtime's JSON. stderr goes to .err
@@ -124,12 +124,17 @@ wake() {
     echo "You are $agent, running on $model. Sign everything you write on GitHub (WORKFLOW.md, Signatures):"
     echo "- last line of every PR body, issue and comment: — $agent · $model"
     echo "- commit trailers: Agent: $agent and Model: $model"
-    case $agent in builder-*|tester)
+    echo
+    echo "Lessons from earlier rejections (agents/LESSONS.md, reviewed by the human):"
+    echo
+    cat "$ROOT/agents/LESSONS.md"
+    fresh=$([ "$key" = lessons ] || new_lessons)    # a "Collect lessons" task lists them already
+    if [ -n "$fresh" ]; then
       echo
-      echo "Lessons from earlier rejections (agents/LESSONS.md):"
+      echo "New lessons, posted since the human last merged LESSONS.md and not reviewed yet. Follow one only where it fits your task:"
       echo
-      cat "$ROOT/agents/LESSONS.md"
-    esac
+      echo "$fresh"
+    fi
   } > "$msg"
 
   log "wake $agent $key: $task${backup:+ (retry on backup model $backup)}"
@@ -196,6 +201,18 @@ wake() {
   else
     echo 1 > "$STATE/fails/$agent-$key"
   fi
+}
+
+# new_lessons: Lesson: lines posted since the last merged lessons PR was opened, minus those already in LESSONS.md,
+# newest 10. Every agent gets them on its next wake-up, before the orchestrator curates them and the human merges.
+# (Nothing else runs while the orchestrator writes a lessons PR, so no lesson falls between it and the merge.)
+new_lessons() {
+  local since
+  since=$(gh pr list -R "$REPO" --state merged --label lessons --limit 1 --json createdAt --jq '.[0].createdAt // empty' 2>/dev/null) || true
+  [ -n "$since" ] || since=$(date -u -d '7 days ago' +%FT%TZ)
+  gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
+    --jq '.[] | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"' 2>/dev/null \
+    | grep -v -F -f <(grep -oE 'https://github\.com/[^ )]+' "$ROOT/agents/LESSONS.md") | tail -10 || true
 }
 
 # model_of <agent>: its configured main model, without the provider, for the wake-up message and signatures.
