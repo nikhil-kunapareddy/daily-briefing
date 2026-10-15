@@ -5,77 +5,127 @@ For humans, this is also the design of the team.
 
 ## Life of a ticket
 
-All work starts as a ticket: a GitHub issue. A ticket ends as a merged PR, or closed with a reason.
+All work starts as a ticket: a GitHub issue. A ticket ends when its code works in main, or closed with a reason.
 Read it top to bottom. Solid arrows move the ticket forward; dashed arrows loop back to an earlier step.
+Yellow means it waits (for you, or for another try); green means done. The two panels below the ticket's path
+show what happens in every agent run, and how lessons spread.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 440}}}%%
 flowchart TD
-  T["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you or an agent"]
-  O{{"<b>2 · Triage</b> · orchestrator<br/>one PR's worth of work?"}}
+  T["<b>1 · GitHub ticket</b> (an issue)<br/>plan from SPEC.md · change-request · bug · tech-debt<br/>filed by you, an agent, or anyone"]
+  G{{"<b>2 · Traces back to you?</b> · dispatcher<br/>filed by you, or the orchestrator's split of yours"}}
+  A(["Waits for your OK<br/>label needs-approval"])
+  O{{"<b>3 · Triage</b> · orchestrator<br/>one PR's worth of work?"}}
   X(["Closed with a reason"])
-  B["<b>3 · Build</b> · builder<br/>opens a PR: Refs #N<br/>label needs-test"]
-  H(["Waits for you<br/>label needs-human"])
-  C{{"<b>4 · CI</b><br/>pytest green?"}}
-  TE{{"<b>5 · Test</b> · tester<br/>works on test data?"}}
-  R{{"<b>6 · Review</b> · reviewer<br/>does what the ticket asks?"}}
-  M["<b>7 · Merged</b> · you"]
-  W{{"<b>8 · Works in main?</b> · dispatcher<br/>CI on main · deployed · /healthz"}}
+  B["<b>4 · Build</b> · builder<br/>branch from main · PR says Refs #N<br/>label needs-test"]
+  C{{"<b>5 · CI</b> · GitHub Actions<br/>pytest green? red: re-run once"}}
+  TE{{"<b>6 · Test</b> · tester<br/>works on test data?"}}
+  R{{"<b>7 · Review</b> · reviewer<br/>does what the ticket asks?"}}
+  S{{"<b>8 · In step with main?</b> · dispatcher<br/>no conflict · up to date"}}
+  M["<b>9 · Merged</b> · you"]
+  W{{"<b>10 · Works in main?</b> · dispatcher<br/>CI on main · deployed · /healthz"}}
   D(["Ticket closed"])
+  SB(["Sent back, with a Lesson<br/>2 allowed per check: CI · test · review"])
+  H(["Waits for you<br/>label needs-human"])
 
-  T --> O
+  T --> G
+  G -->|"yes"| O
+  G -->|"no"| A
+  A -.->|"you remove the label"| O
   O -->|"yes · assigned"| B
-  O -->|"duplicate"| X
+  O -->|"duplicate · not worth it"| X
   O -.->|"too big: split, once"| T
   B --> C
-  B -->|"3rd send-back by one check"| H
-  H -.->|"you remove the label: counts reset"| B
   C -->|"yes"| TE
-  C -.->|"no"| B
   TE -->|"yes · test/passed"| R
-  TE -.->|"no + Lesson"| B
-  TE -.->|"other bug: new ticket, waits for your OK"| T
-  R -->|"yes · review/approved"| M
-  R -.->|"no + Lesson"| B
+  R -->|"yes · review/approved"| S
+  S -->|"yes · ready-to-merge"| M
   M --> W
   W -->|"yes"| D
-  W -.->|"no: ticket stays open, new PR"| B
+  C -.->|"no"| SB
+  TE -.->|"no"| SB
+  R -.->|"no"| SB
+  TE -.->|"other bug: new ticket"| T
+  SB -.->|"1st and 2nd: fix it"| B
+  SB -->|"3rd by one check"| H
+  H -.->|"you remove the label: counts reset"| B
+  S -.->|"no: main merged in, round again · not a send-back"| B
+  W -.->|"no: stays open, fix in a new PR"| B
+
+  subgraph RUN["Every agent run · the dispatcher, plain code"]
+    direction TB
+    K["Wakes one agent for the next step<br/>the moment the last run ends<br/>(cron every 2 min: CI results, your merges)"]
+    P["Wake-up message: task · rules · signature<br/>LESSONS.md + new lessons"]
+    MO{{"Main model answers?"}}
+    BK{{"1st, then 2nd backup answers?"}}
+    DN(["Run done: labels, commits, comments"])
+    LG["Logged: model · tokens · tools<br/>token report on each closed ticket"]
+    RL(["All rate-limited: only this agent pauses<br/>15 → 30 → 60 → 120 min · ticket for you"])
+    FA(["No tool calls or no progress:<br/>retry on the 1st backup · twice: needs-human"])
+    K --> P --> MO
+    MO -->|"yes"| DN
+    MO -->|"rate-limited or down"| BK
+    BK -->|"yes"| DN
+    BK -->|"no"| RL
+    DN --> LG
+    DN -.->|"bad run"| FA
+    LG -.->|"next step"| K
+  end
+
+  subgraph LES["Lessons"]
+    direction TB
+    L1["Every send-back ends with a Lesson: line"]
+    L2["In every agent's next wake-up<br/>marked not reviewed"]
+    L3["Daily: the orchestrator folds them<br/>into LESSONS.md · a lessons PR"]
+    L4["You merge it: kept for good"]
+    L1 --> L2
+    L1 --> L3 --> L4
+  end
+  D ~~~ RUN
+  D ~~~ LES
 
   classDef ticket fill:#ddf4ff,stroke:#0969da,stroke-width:3px,color:#000
   classDef step fill:#eef2ff,stroke:#6366f1,color:#000
   classDef check fill:#fff,stroke:#6366f1,color:#000
   classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
   classDef side fill:#fff3cd,stroke:#b58105,color:#000
+  classDef panel fill:#f6f8fa,stroke:#8c959f,color:#000
   class T ticket
-  class B,M step
-  class O,C,TE,R,W check
-  class D done
-  class X,H side
+  class B,M,K,P,LG,L1,L2,L3,L4 step
+  class G,O,C,TE,R,S,W,MO,BK check
+  class D,DN done
+  class A,X,H,SB,RL,FA side
+  class RUN,LES panel
 ```
 
 1. **GitHub ticket.** The human files the plan ticket ("Plan the build from `SPEC.md`", label `assign:orchestrator`) and any
    `change-request`. The tester files `bug` tickets. Any agent may file `tech-debt`. Only the orchestrator assigns.
-   A ticket an agent files waits for the human's OK (`needs-approval`), unless it is the orchestrator's split of a
-   human's ticket (rule 2).
-2. **Triage** by the orchestrator. It splits a big ticket into tickets that each fit one PR, and closes duplicates and
-   ones not worth doing, with a reason. Every ticket gets Goal, Acceptance, Needs and Files likely touched.
-   It adds `assign:<builder>` once the ticket's Needs are merged and that builder is free.
-3. **Build** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
+2. **Traces back to you?** Plain check by the dispatcher: a ticket the human filed, or the orchestrator's split of one
+   (`Part of #N`), is work. Anything else, from an agent or a stranger, gets `needs-approval` and waits until the human
+   removes the label (rule 2).
+3. **Triage** by the orchestrator. It splits a big ticket into tickets that each fit one PR (once: never a split of a
+   split), and closes duplicates and ones not worth doing, with a reason. Every ticket gets Part of, Goal, Acceptance,
+   Needs and Files likely touched. It adds `assign:<builder>` once the ticket's Needs are closed and that builder is free.
+4. **Build** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
    then a PR that starts `Refs #<issue>`, labelled `needs-test`.
-4. **CI** runs pytest on the PR. If it's red, the dispatcher re-runs it once (in case it was a flake),
+5. **CI** runs pytest on the PR. If it's red, the dispatcher re-runs it once (in case it was a flake),
    then sends the PR back with no model call.
-5. **Test** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
+6. **Test** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
    Fail: label `changes-requested`, with evidence and a `Lesson:` line.
-6. **Review** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
+7. **Review** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
    Reject: label `changes-requested`, with the reason and a `Lesson:` line.
-7. **Merged** by the human.
-8. **Works in main?** Plain checks by the dispatcher on the merge commit: CI green on `main`, the VM deployed it
-   (and `scripts/install.sh` worked, once it exists), and `/healthz` answers 200 (once the app has it).
-   Pass: the dispatcher closes the ticket, and the orchestrator assigns the next one. Fail, or no result within
-   30 minutes: the ticket stays open and its builder fixes it in a new PR. A ticket is done when it works in main,
-   not when its PR merges.
+8. **In step with main?** Plain check by the dispatcher, at every step: a PR that conflicts with `main` goes back to
+   its builder to merge `origin/main` in; one that fell behind gets `main` merged in by GitHub and is tested and
+   reviewed again. Neither counts as a send-back. `main` only takes a PR that is up to date with it.
+9. **Merged** by the human.
+10. **Works in main?** Plain checks by the dispatcher on the merge commit: CI green on `main`, the VM deployed it
+    (and `scripts/install.sh` worked, once it exists), and `/healthz` answers 200 (once the app has it).
+    Pass: the dispatcher closes the ticket, and the orchestrator assigns the next one. Fail, or no result within
+    30 minutes: the ticket stays open and its builder fixes it in a new PR. A ticket is done when it works in main,
+    not when its PR merges.
 
-A sent-back PR goes back to step 3 on the same branch. CI, test and review each have their own budget: the third
+A sent-back PR goes back to step 4 on the same branch. CI, test and review each have their own budget: the third
 send-back by the same check gets `needs-human` instead (rule 5).
 Cheap checks run first, so the strong reviewer model only sees code that already works.
 
@@ -139,7 +189,7 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 
 - **Branch:** `<agent>/<issue>-<short-name>`, for example `builder-ingest/3-new-items`. The dispatcher finds a PR's builder from this prefix.
 - **PR body:** first line `Refs #<issue>`. Never `Closes`, `Fixes` or `Resolves`, in the body or in commits: the
-  ticket closes when its code works in main (step 8), and the dispatcher rewrites those words to `Refs`. Then what changed, and how you tested it (paste pytest's summary line).
+  ticket closes when its code works in main (step 10), and the dispatcher rewrites those words to `Refs`. Then what changed, and how you tested it (paste pytest's summary line).
 - **Commits:** author name is your agent name. End each message with two trailers: `Agent: <your name>` and `Model: <your model>`.
 - **Signatures:** everything an agent writes on GitHub ends with one line naming the agent and its model:
   `— <agent> · <model>`, for example `— tester · gemma4:31b`. That means every PR body, issue and comment.
@@ -186,7 +236,7 @@ Cron also starts it every 2 minutes, for what no agent does: CI finishing, and t
 1. **reviewer:** the oldest PR with `needs-review`.
 2. **tester:** the oldest PR with `needs-test` whose CI is green. Red CI: the dispatcher sends the PR back. Still running: wait.
 3. **builder:** its oldest PR with `changes-requested`, otherwise its oldest `assign:<builder>` issue that has no open PR.
-   An issue whose PR merged waits for the works-in-main check (step 8), unless the check failed: then it goes back to its builder.
+   An issue whose PR merged waits for the works-in-main check (step 10), unless the check failed: then it goes back to its builder.
    The tester is woken the same way for its own test-writing issues.
 4. **orchestrator:** once a day, new `Lesson:` lines (see LESSONS.md below). Otherwise an issue with `assign:orchestrator` (it removes the label when done), or the board changed since its last run
    (a new or relabelled issue, a merged or closed PR).
