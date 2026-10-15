@@ -291,30 +291,56 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
 - These names, their arguments and what they return don't change unless this spec changes. A lane that needs one
   more asks for it (WORKFLOW.md, "Needed by").
 
-**How the agents build it** (the numbers are the waves of the order below; arrows are Needs and touch points):
+**How the agents build it.** You file one plan ticket; the orchestrator splits and assigns; every ticket then goes
+through the same path (`agents/WORKFLOW.md`). The numbers are the waves of the order below.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 420}}}%%
 flowchart TD
-  W1["<b>1 · builder-ingest</b><br/>config · db (schema, read and write functions) · requirements.txt"]
-  W2T["<b>2 · tester</b><br/>fixtures/arxiv_sample.xml"]
-  W2O["<b>2 · builder-ops</b><br/>scripts/install.sh<br/>needs only two names:<br/>app.web:create_app() · python -m app.job"]
-  W3I["<b>3 · builder-ingest</b><br/>arxiv · job, with open dates"]
-  W3W["<b>3 · builder-web</b><br/>page · day navigation · history · /runs"]
-  W4I["<b>4 · builder-ingest</b><br/>summaries"]
-  W4W["<b>4 · builder-web</b><br/>Run now · rate limit · /healthz"]
-  W5["<b>5 · tester</b><br/>behaviour tests across the lanes"]
+  U["<b>You</b> · file the plan ticket: Plan the build from SPEC.md<br/>label assign:orchestrator"]
+  O["<b>orchestrator</b> · reads SPEC.md and splits it along the Code layout<br/>into 6–8 tickets (Part of #N · Goal · Acceptance · Needs · Files)<br/>assigns each one once its Needs are closed and its builder is free"]
 
-  W1 -->|"db write functions"| W3I
-  W1 -->|"db read functions"| W3W
-  W3I --> W4I
-  W3I -->|"python -m app.job --run-id N"| W4W
-  W3W --> W4W
-  W2T --> W5
-  W4I --> W5
-  W4W --> W5
-  W1 ~~~ W2O
-  W1 ~~~ W2T
+  subgraph WAVES["The tickets, in waves (arrows are Needs and touch points)"]
+    W1["<b>1 · builder-ingest</b><br/>config · db (schema, read and write functions) · requirements.txt"]
+    W2T["<b>2 · tester</b><br/>fixtures/arxiv_sample.xml"]
+    W2O["<b>2 · builder-ops</b><br/>scripts/install.sh · needs only two names:<br/>app.web:create_app() · python -m app.job"]
+    W3I["<b>3 · builder-ingest</b><br/>arxiv · job, with open dates"]
+    W3W["<b>3 · builder-web</b><br/>page · day navigation · history · /runs"]
+    W4I["<b>4 · builder-ingest</b><br/>summaries"]
+    W4W["<b>4 · builder-web</b><br/>Run now · rate limit · /healthz"]
+    W5["<b>5 · tester</b><br/>behaviour tests across the lanes"]
+    W1 -->|"db write functions"| W3I
+    W1 -->|"db read functions"| W3W
+    W3I --> W4I
+    W3I -->|"python -m app.job --run-id N"| W4W
+    W3W --> W4W
+    W1 ~~~ W2T
+    W1 ~~~ W2O
+    W2T --> W5
+    W4I --> W5
+    W4W --> W5
+  end
+
+  subgraph EACH["Every ticket goes through this · WORKFLOW.md, Life of a ticket"]
+    direction LR
+    E1["builder · PR"] --> E2{{"CI"}} --> E3{{"tester"}} --> E4{{"reviewer"}} --> E5["you merge"] --> E6{{"works in main?"}}
+  end
+
+  V(["<b>v1 live</b> · Done when 1–5"])
+
+  U --> O
+  O -->|"assigns"| WAVES
+  WAVES -.- EACH
+  EACH -.->|"works in main: ticket closed, the next tickets' Needs are met"| O
+  E2 -.->|"no"| E1
+  E3 -.->|"no + Lesson"| E1
+  E4 -.->|"no + Lesson"| E1
+  W5 --> V
+
+  classDef you fill:#ddf4ff,stroke:#0969da,stroke-width:2px,color:#000
+  classDef done fill:#dcf5e3,stroke:#0e8a16,color:#000
+  class U,E5 you
+  class V done
 ```
 
 **A sensible order** (the orchestrator decides; Needs go by this):
