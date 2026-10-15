@@ -54,7 +54,10 @@ flowchart TD
 - **Flask** with Jinja templates, rendered on the server, served by **gunicorn**: 2 workers, a 60-second timeout,
   bound to `127.0.0.1:8000`, errors to `/var/log/daily-briefing/web.log`. Caddy already serves
   `https://dailyresearch.duckdns.org` and forwards to it.
-- **SQLite** in WAL mode, foreign keys on. **No Docker**, no other database, nothing paid. The only outside call is the arXiv API.
+- **SQLite** in WAL mode, foreign keys on. Each web request opens its own connection and closes it at the end; every
+  connection waits up to 5 seconds when the database is busy (`busy_timeout=5000`). Indexes on a paper's stable ID
+  (unique) and a run's start time.
+- **No Docker**, no other database, nothing paid. The only outside call is the arXiv API.
 - **Where it runs:** on the VM as the Linux user `app`, from the `main` checkout in `/srv/daily-briefing`.
   Data in `/var/lib/daily-briefing/` (it exists, owned by `app`), set by the environment variable `DAILY_BRIEFING_DATA`.
   Tests and test servers always point it at a temporary folder, never at the live one.
@@ -107,7 +110,7 @@ flowchart TD
 12. **Run history** below: the newest 10 runs, newest first, each with its time (UTC), ✓ or ✗, schedule or Run now,
     and the new count ("no new submissions" instead of 0). A failed row shows its error in short.
 13. Readable on a phone; times in UTC and say so. One column, at most 760px wide, the system font, one stylesheet
-    served by the app, no JavaScript, no CDN.
+    served by the app, no JavaScript, no CDN. The look is rules 18–19.
 14. The footer says: "Thank you to arXiv for use of its open access interoperability." Nothing suggests arXiv endorses the app.
 
 **Run now** (`POST /run-now`)
@@ -119,6 +122,39 @@ flowchart TD
 **Health** (`GET /healthz`)
 17. Answers `200` with JSON when the app can read its database: the latest run's time and status. Otherwise `503`.
 
+**The look** (the human approved this from a mockup; build it from these words, not from any HTML)
+18. **Top to bottom**, and nothing else:
+
+    ```
+    Daily Briefing                                              [ Run now ]
+    New papers in arXiv cs.MA (multi-agent systems),    At most once every 10 minutes
+    every day at 02:00 UTC
+    ───────────────────────────────────────────────────────────────────────
+    ▌No new submissions since the last run (checked 14:32 UTC).    (only when rule 11 applies)
+
+    Wed 14 Oct 2026
+    5 new since the last run · Last checked 02:00 UTC
+    ┌──────┬──────────────────────────────────────────┬───────────────────────────┬─────┐
+    │ S.NO │ TITLE                                    │ DOI                       │ PDF │
+    │ 1    │ The Wealth of Agents: Scaling Agentic AI │ 10.48550/arXiv.2610.20518 │ PDF │
+    └──────┴──────────────────────────────────────────┴───────────────────────────┴─────┘
+
+    Run history
+    All times UTC.
+    TIME            ✓/✗   TRIGGER    RESULT
+    15 Oct, 14:32   ✓     Run now    no new submissions
+    …the newest 10…
+    ───────────────────────────────────────────────────────────────────────
+    Thank you to arXiv for use of its open access interoperability. · Source: the arXiv API · /healthz
+    ```
+    "Try again in N min" (rule 16) appears as the same kind of note, under the header.
+19. **Style.** One accent colour for links and the Run now button. Titles bold; DOIs in a smaller, grey, monospace
+    font; table headers small, grey and upper-case. The "no new submissions" and "Try again" lines are a pale yellow
+    note with a darker left border. ✓ green, ✗ red. Light or dark from the visitor's system setting.
+    **On screens 600px wide or less:** the table's header row hides, and each paper's DOI and PDF link sit on one
+    line under its title; each history row becomes a small card (time, ✓ or ✗ and trigger on one line, the result
+    under it). Nothing scrolls sideways. Only the states that apply are shown: no example or placeholder sections.
+
 ## Code layout
 
 Which files belong to which builder, so they can work at the same time without colliding. The orchestrator splits
@@ -129,7 +165,7 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
 | `app/__init__.py`, `app/config.py` | builder-ingest | The package, and the one place for settings (data folder, arXiv URL, User-Agent) |
 | `app/db.py` | builder-ingest | The schema and **all** SQL, including the functions below |
 | `app/arxiv.py`, `app/job.py` | builder-ingest | The request and parsing (rules 6–7); one run (rules 1–9); `python -m app.job` |
-| `app/web.py`, `app/templates/`, `app/static/style.css` | builder-web | `create_app()`, the routes `/`, `POST /run-now`, `/healthz`, the page (rules 10–17) |
+| `app/web.py`, `app/templates/`, `app/static/style.css` | builder-web | `create_app()`, the routes `/`, `POST /run-now`, `/healthz`, the page (rules 10–19) |
 | `scripts/install.sh` | builder-ops | Install, backup, the service and the crontab line (Stack, Install) |
 | `requirements.txt` | builder-ingest | Pinned dependencies. Another lane that needs a package asks in its PR |
 | `tests/test_<module>.py` | that module's lane | Unit tests |
@@ -154,7 +190,7 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
 ## Done when
 
 1. `https://dailyresearch.duckdns.org` shows the latest briefing (the date, how many are new, and the table of
-   S.No, Title, DOI and PDF) and the run history.
+   S.No, Title, DOI and PDF) and the run history, laid out and styled as rules 18–19 say, on a desktop and a phone.
 2. The history has at least 3 real runs, and one of them found no new submissions (Run now right after another run).
 3. Run now adds a row. A second press within 10 minutes shows "Try again in N min" and adds no row.
 4. The 02:00 UTC schedule is installed, and `scripts/install.sh` can be run twice in a row without errors or
