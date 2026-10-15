@@ -21,7 +21,8 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 - **Python 3.12** (the VM's and CI's). Dependencies pinned with exact versions in `requirements.txt`.
 - **Flask** with Jinja templates, rendered on the server, served by **gunicorn**. No JavaScript framework.
 - **SQLite** in WAL mode, so the page can read while a run writes. Foreign keys switched on.
-- **No Docker**, no other database, no paid or keyed service. The only outside call is the arXiv API.
+- **No Docker**, no other database, nothing paid. Two outside calls only: the arXiv API, and one Gemini API request
+  per run for the summaries (free tier, rules 18–20).
 - **Where it runs:** on the VM as the Linux user `app`, from the `main` checkout in `/srv/daily-briefing`.
   - The app listens on **`127.0.0.1:8000`**. Caddy already serves `https://dailyresearch.duckdns.org` and forwards to it.
   - Data lives in **`/var/lib/daily-briefing/`** (it exists, owned by `app`).
@@ -36,10 +37,10 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
     Lingering is on for `app`, and `XDG_RUNTIME_DIR` is set, so `systemctl --user` works from cron.
   - A line in **`app`'s crontab** runs the job at 02:00 UTC. Re-running the install doesn't add a second line.
 - **Tests:** in `tests/`, run by `python -m pytest` from the repo root. CI runs them on every PR.
-  - Tests never call the real arXiv API. Use the saved response in `fixtures/arxiv_sample.xml`: a real `cs.MA` response to the query above for
-    D = `20261013` (5 entries),
-    with each entry's `<summary>` (the abstract) and `<author>` elements cut out. The app doesn't use them, and nobody
-    should read them.
+  - Tests never call the real arXiv API. Use the saved response in `fixtures/arxiv_sample.xml`: a real `cs.MA`
+    response to the query above for D = `20261013` (5 entries), with each entry's `<summary>` (the abstract) and
+    `<author>` elements cut out, so no agent reads them. A paper without an abstract simply gets no summary line.
+  - Tests never call a model either: summaries come from a fake. A test that needs an abstract writes a short made-up one.
 
 ## Rules
 
@@ -49,7 +50,8 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
    - A new version of a paper already seen (v2 after v1) is **not** new.
    - A later version of a paper never seen before (a v3 seen for the first time) **is** new.
    - On the very first run, everything is new.
-3. This comparison is plain code. No model decides what is new.
+3. This comparison is plain code. No model decides what is new. The one model call writes summary sentences
+   (rule 18) and nothing else: it never changes what is new, saved or shown.
 4. Every paper the query returns counts, including ones cross-listed from another category.
 5. **Dates.** A paper belongs to the date it was submitted (UTC). Each date shows at most 5 papers: the first 5 new
    ones found for it, newest submission first.
@@ -68,11 +70,17 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 7. A **check of a date fails** when the request errors or times out, arXiv answers with a non-200 status, or the
    response can't be parsed. A failed check marks nothing as seen, and its date stays open. A run fails when any of
    its checks fails. An empty list is **not** a failure: arXiv has announced nothing for that date (yet).
+   arXiv reports errors as an entry too, whose `<id>` starts with `https://arxiv.org/api/errors` (title "Error"):
+   that is a failed check, never a paper. Its HTTP status is 400, but don't rely on the status alone.
 8. The database keeps which papers each run saw, so any run's briefing can be rebuilt.
    **Nothing saved is ever deleted or rewritten**: not a run, not a paper, not the link between them. Schema changes
    only add tables or columns; they never drop, rename or rewrite existing ones.
-   Per paper, the app keeps only what the page needs: its arXiv ID with version, title, PDF link and dates.
-   Never its abstract or authors, and the app never downloads a PDF.
+   - **Per paper**, only: stable ID and version (both from `<id>`), title with line breaks and repeated spaces
+     collapsed to one space, PDF link (`<link title="pdf">`), `<published>` and `<updated>` (UTC), its date (the
+     UTC date of `<published>`), its abstract (`<summary>`, only to make the summary; never shown), and its summary
+     with where it came from (rule 20). Never its authors or categories, and the app never downloads a PDF.
+   - **Per check of a date:** the date, the result (papers, empty, or the error), and arXiv's
+     `<opensearch:totalResults>` (how many papers that date has in all).
 
 **Being polite to arXiv**
 9. At most one arXiv request every 3 seconds, across schedule and Run now. One request per date checked.
@@ -82,7 +90,8 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 11. **Latest briefing** at the top: the newest date that has papers, as a heading ("Tue 13 Oct 2026"), and its
     papers (at most 5, newest submission first) as a table with four columns and nothing else about a paper:
     - **S.No:** 1, 2, 3 …
-    - **Title:** the paper's title, as plain text.
+    - **Title:** the paper's title, as plain text, and under it its summary sentence in smaller text, starting
+      "AI summary:" or "From the abstract:" (rule 20).
     - **DOI:** arXiv's DOI for the paper, `10.48550/arXiv.<stable ID>` (arXiv registers one for every paper),
       for example `10.48550/arXiv.2610.13870`.
     - **PDF:** a link to the paper's PDF, the one the API gives for that entry (its `<link title="pdf">`).
@@ -107,10 +116,27 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 **Health** (`GET /healthz`)
 17. Answers `200` with JSON when the app can read its database: the latest run's time and status. Otherwise `503`.
 
+**Summaries** (one model call per run)
+18. After a run's checks, the job asks **`gemini-2.5-flash`** for one sentence per new paper, from its abstract only:
+    what the paper does or finds, in plain words, at most 30 words. **One request per run** for all its new papers
+    (at most 25; any more wait for the next run), with a 30-second timeout:
+    `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent`, with the key in
+    the header `x-goog-api-key`, asking for JSON (`generationConfig.responseMimeType: application/json`) with thinking
+    off (`generationConfig.thinkingConfig.thinkingBudget: 0`; with it on, a test call spent 286 thinking tokens on a
+    48-token answer). The key is `GEMINI_API_KEY` in `/home/app/.env`: readable only by `app`, put there
+    by the human's setup, never in the repo. The web service and the cron job both load it.
+19. **A summary never breaks a run.** If the request fails or times out, the key is missing, or a sentence is missing
+    or longer than 40 words, that paper shows its abstract's first sentence instead (at most 250 characters), and the
+    run's result doesn't change. A paper without an AI summary is asked about again on the next 3 runs, then keeps
+    the first sentence.
+20. Each summary is saved with where it came from: the model's name, or "first sentence". The page labels it
+    "AI summary:" or "From the abstract:", so nobody mistakes model text for the authors'.
+
 ## Done when
 
-1. `https://dailyresearch.duckdns.org` shows the latest briefing (at most 5 papers, each with S.No, title, DOI and
-   PDF link) and the run history, and every date from 2026-10-13 has a briefing or a no-submissions line.
+1. `https://dailyresearch.duckdns.org` shows the latest briefing (at most 5 papers, each with S.No, title and its
+   summary, DOI and PDF link) and the run history, and every date from 2026-10-13 has a briefing or a
+   no-submissions line.
 2. The history has at least 3 real runs: the first checked every date from 2026-10-13, and one found no new
    submissions (Run now right after another run).
 3. Run now adds a row. A second press within 10 minutes shows "Try again in N min" and adds no row.
@@ -126,5 +152,10 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
      is not checked again;
    - each request asks for one date and 5 results, and a date shows at most 5 papers, each with S.No, title, DOI and
      PDF link;
+   - an error entry (`<id>` under `https://arxiv.org/api/errors`) is a failed check, not a paper; titles are saved
+     with their whitespace collapsed;
+   - summaries: one model request per run covers all its new papers; the model's sentence shows as "AI summary:";
+     a model error, a timeout or a missing key gives "From the abstract:" and the first sentence, the run still
+     succeeds, and the paper is asked about again on the next run;
    - the Run now rate limit;
    - `/healthz`.

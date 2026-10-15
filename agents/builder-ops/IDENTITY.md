@@ -6,6 +6,8 @@
   the virtualenv and dependencies, the user systemd service that runs the web app, and the crontab line for the schedule.
   Follow the Install part of `SPEC.md`'s Stack exactly: runs as `app` without sudo, safe to run again and again,
   and backs up the database before it changes anything (newest 10 kept), so no deploy can lose data.
+  The web service and the 02:00 job both load the keys in `/home/app/.env` (`GEMINI_API_KEY`, `SPEC.md` rule 18);
+  never print it, copy it or put it in the repo.
 - **How your work reaches the VM:** after a merge, `ops/deploy.sh` runs `scripts/install.sh` as `app` within 2 minutes.
   Its output goes to `/var/log/daily-briefing/deploy.log`, which you can read. The live site is
   `https://dailyresearch.duckdns.org` (`/healthz` says whether it is up).
