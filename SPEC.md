@@ -33,9 +33,10 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
   - **Before it changes anything, it backs up the database** (SQLite's online backup) into
     `/var/lib/daily-briefing/backups/`, keeping the newest 10. A bad change can then always be undone.
   - Python virtualenv outside the checkout (in `app`'s home), dependencies installed from `requirements.txt`.
-  - A **user systemd service** runs gunicorn and is restarted on each install, so new code goes live.
+  - A **user systemd service** runs gunicorn (settings: rule 31) and is restarted on each install, so new code goes live.
     Lingering is on for `app`, and `XDG_RUNTIME_DIR` is set, so `systemctl --user` works from cron.
-  - A line in **`app`'s crontab** runs the job at 02:00 UTC. Re-running the install doesn't add a second line.
+  - A line in **`app`'s crontab** runs the job at 02:00 UTC: `python -m app.job`, its output added to
+    `/var/log/daily-briefing/job.log`. Re-running the install doesn't add a second line.
 - **Tests:** in `tests/`, run by `python -m pytest` from the repo root. CI runs them on every PR.
   - Tests never call the real arXiv API. Use the saved response in `fixtures/arxiv_sample.xml`: a real `cs.MA`
     response to the query above for D = `20261013` (5 entries), with each entry's `<summary>` (the abstract) and
@@ -109,7 +110,8 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
 14. The footer says: "Thank you to arXiv for use of its open access interoperability." Nothing suggests arXiv endorses the app.
 
 **Run now** (`POST /run-now`)
-15. Starts a run with trigger "manual" and goes back to the page, which shows the new row.
+15. Starts a run with trigger "manual" and goes straight back to the page (rule 27), which shows the run in progress
+    and then its new row.
 16. Rate limit: at most **one manual run every 10 minutes**, for everyone together, worked out from the saved runs.
     Pressed too soon, the page says "Try again in N min" and no run starts.
 
@@ -179,6 +181,31 @@ saves every run, and shows a short briefing for each date: at most 5 papers, **f
     note with a darker left border; ✓ green, ✗ red.
 26. **Only the states that apply are shown.** No example, demo, legend or placeholder sections.
 
+**Backend** (so it runs well on one small VM)
+27. **Run now never runs inside the web request.** `POST /run-now` checks the rate limit (rule 16) and saves the new
+    run as "running" in **one** database transaction (`BEGIN IMMEDIATE`), so two presses at once can't both pass. Then it
+    starts `python -m app.job --run-id <id>` as its own process and goes straight back to the page. The scheduled
+    run is the same command without `--run-id`.
+28. **One run at a time.** A run holds a lock file, `run.lock` in the data folder, for its whole length. A run that
+    finds it taken waits up to 10 minutes, then is saved as failed: "another run was still going". Because runs never
+    overlap, the 3-second spacing (rule 9) holds: a run's first request comes at least 3 seconds after the last request
+    saved in the database.
+29. **A run in progress is visible.** While one is running, the page shows a note at the top, "A run is in progress
+    (started 14:32 UTC).", and reloads itself every 10 seconds (`<meta http-equiv="refresh" content="10">`, not
+    JavaScript) until it ends. Its history row says "running…". A run still marked running after 15 minutes counts
+    as failed: "stopped without finishing".
+30. **Database.** Each web request opens its own connection and closes it at the end; a run opens its own. Every
+    connection sets `journal_mode=WAL`, `foreign_keys=ON` and `busy_timeout=5000`. A run writes in short transactions,
+    one per check, so the page never waits on it. Indexes (or unique constraints) on: a paper's stable ID (unique),
+    a paper's date, a run's start time, and a check's date and its run, so every page query stays fast as the
+    history grows.
+31. **gunicorn:** 2 workers, a 60-second timeout, bound to `127.0.0.1:8000`, errors to `/var/log/daily-briefing/web.log`,
+    no access log.
+32. **Logs** go to `/var/log/daily-briefing/` (owned by `app`; the agents and the deploy check can read it, unlike the
+    service's own journal): `job.log`, one line per run start and end, per check and per summary request (never an
+    abstract or a key), rotated at 5 MB with 3 old files kept; `web.log` (rule 31); and `deploy.log`, written by
+    `ops/deploy.sh`. Request timeouts: arXiv 30 seconds, Gemini 30 seconds.
+
 ## Code layout
 
 Which files belong to which builder, so the three can work at the same time without colliding. The orchestrator
@@ -188,10 +215,10 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
 |---|---|---|
 | `app/__init__.py` | builder-ingest | Empty: makes `app` a package |
 | `app/config.py` | builder-ingest | The one place for settings: data folder (`DAILY_BRIEFING_DATA`), start date 2026-10-13, arXiv URL and User-Agent, model name, timeouts |
-| `app/db.py` | builder-ingest | The schema, the connection (WAL, foreign keys), and **all** SQL, including the read functions below |
+| `app/db.py` | builder-ingest | The schema with its indexes, the connection settings (rule 30), and **all** SQL, including the functions below |
 | `app/arxiv.py` | builder-ingest | The query for one date, the request, and parsing entries (rules 7 and 8) |
 | `app/summaries.py` | builder-ingest | The one Gemini request per run and the first-sentence fallback (rules 18–20) |
-| `app/job.py` | builder-ingest | One run: which dates are open, their checks, saving, then summaries (rules 2–9) |
+| `app/job.py` | builder-ingest | One run: the lock, which dates are open, their checks, saving, then summaries (rules 2–9, 28); `python -m app.job [--run-id N]`; its log (rule 32) |
 | `app/web.py` | builder-web | `create_app()` and the routes: `/`, `/?date=`, `/runs`, `POST /run-now`, `/healthz` |
 | `app/templates/` | builder-web | Jinja templates: `base.html`, `index.html`, `runs.html`, `404.html` |
 | `app/static/style.css` | builder-web | The one stylesheet (rule 25) |
@@ -204,8 +231,10 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
 - The web side reads data **only** through these functions in `app/db.py`, never with its own SQL. Each returns
   plain dicts and lists: `latest_date_with_papers()`, `briefing(date)` (the date's papers in order, `totalResults`,
   when it was last checked), `dates_without_papers(after)` (each with "open" or "closed"), `latest_runs(limit)`,
-  `runs_page(page, per_page)`, `runs_for_date(date)`, `last_manual_run_time()`, `health()`.
-- Run now calls `app.job.run(trigger="manual")`. The schedule runs `python -m app.job` (trigger "schedule").
+  `runs_page(page, per_page)`, `runs_for_date(date)`, `current_run()` (the run in progress, or none), `health()`.
+- Run now calls `start_manual_run()` in `app/db.py`: the rate-limit check and the new "running" row in one
+  transaction. It returns the new run's id, or how many minutes to wait. Then the web side starts
+  `python -m app.job --run-id <id>` in its own process (rule 27). The schedule runs `python -m app.job`.
 - gunicorn serves `app.web:create_app()` on `127.0.0.1:8000`.
 - Settings come from `app/config.py` only.
 
@@ -223,7 +252,8 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
    a briefing or a no-submissions line, reachable with the day arrows and the date picker.
 2. The history has at least 3 real runs: the first checked every date from 2026-10-13, and one found no new
    submissions (Run now right after another run).
-3. Run now adds a row. A second press within 10 minutes shows "Try again in N min" and adds no row.
+3. Run now goes straight back to the page, which shows the run in progress, then its row. A second press within
+   10 minutes shows "Try again in N min" and adds no row.
 4. The 02:00 UTC schedule is installed, and `scripts/install.sh` can be run twice in a row without errors or duplicates.
    Each run of it leaves a database backup, and never more than 10.
 5. `python -m pytest` passes in CI, and the tests cover at least:
@@ -243,6 +273,9 @@ splits the work along these lanes and takes each ticket's "Files likely touched"
      succeeds, and the paper is asked about again on the next run;
    - the Run now rate limit;
    - `/healthz`;
+   - Run now returns at once and starts the run in its own process (tests use a fake starter); two presses at the same
+     moment start one run; two runs never overlap (the lock); a run still running after 15 minutes shows as failed;
+     every connection has WAL, foreign keys and the busy timeout;
    - day navigation: the arrows stop at 2026-10-13 and at yesterday, and `/?date=` outside that range answers `404`;
    - run history: 10 runs on the main page, 50 per page on `/runs`, and a date's page lists only the runs that
      checked it.
