@@ -62,10 +62,36 @@ has_status() {
     <<<"$prs" >/dev/null
 }
 
-# How many times PR $1 has been sent back.
-sendbacks() {
-  gh api "repos/$REPO/issues/$1/timeline" --paginate \
-    --jq '.[] | select(.event == "labeled" and .label.name == "changes-requested") | 1' | wc -l
+# Send-backs are counted per check (rule 5): ci, test and review each have their own budget of 2.
+# sendbacks/pr-N holds one line per send-back, naming the check that sent it.
+SENDBACKS=$STATE/sendbacks
+mkdir -p "$SENDBACKS" "$STATE/ci-rerun"
+sent_back() {                                  # sent_back <pr> <check>: count one send-back
+  [ "$DRY_RUN" = 1 ] && return 0
+  echo "$2" >> "$SENDBACKS/pr-$1"
+  log "send-back pr-$1 by $2: $(sendbacks "$1" "$2") so far, 2 allowed"
+}
+sendbacks() {                                  # sendbacks <pr> <check>: how many so far
+  local n; n=$(grep -cx "$2" "$SENDBACKS/pr-$1" 2>/dev/null) || true; echo "${n:-0}"
+}
+over_budget() {                                # over_budget <pr>: the check that sent it back a third time, if any
+  local c
+  for c in ci test review; do [ "$(sendbacks "$1" "$c")" -gt 2 ] && { echo "$c"; return; }; done
+  return 0
+}
+sendback_counts() { echo "CI $(sendbacks "$1" ci), test $(sendbacks "$1" test), review $(sendbacks "$1" review)"; }
+
+# rerun_ci <pr>: re-run the PR's failed pytest job once per commit, in case the failure was a flake.
+rerun_ci() {
+  local sha run
+  sha=$(jq -r --argjson n "$1" '.[] | select(.number == $n) | .headRefOid' <<<"$prs")
+  [ -e "$STATE/ci-rerun/$sha" ] && return 1     # already re-run: this failure is real
+  run=$(jq -r --argjson n "$1" '.[] | select(.number == $n) | .statusCheckRollup[]? | select(.name == "pytest")
+    | .detailsUrl // "" | capture("/actions/runs/(?<id>[0-9]+)").id // empty' <<<"$prs" | head -1)
+  [ -n "$run" ] || return 1
+  act gh run rerun "$run" --failed -R "$REPO" >/dev/null 2>&1 || return 1
+  [ "$DRY_RUN" = 1 ] || touch "$STATE/ci-rerun/$sha"
+  log "re-ran CI on pr-$1 (run $run): one re-run per commit before a send-back"
 }
 
 # Does agent $1 have an open PR for issue $2? (branch <agent>/<issue>-...)
@@ -128,6 +154,12 @@ wake() {
   elif [ "$rc" -eq 0 ] && [ -n "$before" ] && [ "$before" = "$(item_state "$key")" ]; then
     rc=3
     log "no progress: $agent left $key unchanged"
+  fi
+  # A tester or reviewer run that moved its PR to changes-requested: count it against that check (rule 5).
+  # They are only woken on needs-test or needs-review PRs, so the label is this run's doing.
+  if [[ $agent =~ ^(tester|reviewer)$ ]] && [[ $key =~ ^pr-[0-9]+$ ]] &&
+     [ "$(gh pr view "${key#pr-}" -R "$REPO" --json labels --jq 'any(.labels[]; .name == "changes-requested")' 2>/dev/null)" = true ]; then
+    sent_back "${key#pr-}" "$([ "$agent" = tester ] && echo test || echo review)"
   fi
   # A failed run that ended on a rate limit, after the runtime tried every model in the agent's chain.
   if [ "$rc" -ne 0 ] && [ -n "$(rate_limit_error "$agent" "$out")" ]; then
@@ -359,9 +391,10 @@ while read -r n branch sha; do
     success) cooling tester && continue
              wake tester "pr-$n" "PR #$n needs testing."; exit 0 ;;
     failure)
+      rerun_ci "$n" && continue                  # a flake gets one more try; wait for the re-run
       relabel "$n" changes-requested needs-test
-      comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back to the builder without testing. See the checks tab."
-      log "sent back pr-$n: CI failed"
+      comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back to the builder without testing. (A failure is re-run once per commit first, in case it was a flake.) See the checks tab."
+      sent_back "$n" ci
       prs=$(gh pr list -R "$REPO" --state open --limit 100 \
         --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup) ;;
     pending) ;;
@@ -374,10 +407,11 @@ while read -r n branch sha; do
   [ -n "$n" ] || continue
   owner=${branch%%/*}
   [[ " ${BUILDERS[*]} " == *" $owner "* ]] || { log "skip pr-$n: branch $branch has no builder prefix"; continue; }
-  if [ "$(sendbacks "$n")" -gt 2 ]; then
+  over=$(over_budget "$n")
+  if [ -n "$over" ]; then
     relabel "$n" needs-human changes-requested
-    comment "$n" "Dispatcher: sent back 3 times. Over to the human (WORKFLOW.md rule 5)."
-    log "needs-human pr-$n after 3 send-backs"
+    comment "$n" "Dispatcher: sent back a third time by the same check ($over). Over to the human (WORKFLOW.md rule 5). Send-backs so far: $(sendback_counts "$n")."
+    log "needs-human pr-$n: third send-back by $over ($(sendback_counts "$n"))"
     continue
   fi
   cooling "$owner" && continue

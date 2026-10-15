@@ -26,7 +26,7 @@ flowchart TD
   O -->|"duplicate"| X
   O -.->|"too big: split"| T
   B --> C
-  B -->|"sent back 3×"| H
+  B -->|"3rd send-back by one check"| H
   C -->|"yes"| TE
   C -.->|"no"| B
   TE -->|"yes · test/passed"| R
@@ -54,14 +54,16 @@ flowchart TD
    It adds `assign:<builder>` once the ticket's Needs are merged and that builder is free.
 3. **Build** by the assigned builder: branch `<agent>/<issue>-<name>`, code and tests, its own pytest run,
    then a PR that starts `Closes #<issue>`, labelled `needs-test`.
-4. **CI** runs pytest on the PR. If it's red, the dispatcher sends the PR back with no model call.
+4. **CI** runs pytest on the PR. If it's red, the dispatcher re-runs it once (in case it was a flake),
+   then sends the PR back with no model call.
 5. **Test** by the tester, against fixtures. Pass: status `test/passed`, label `needs-review`.
    Fail: label `changes-requested`, with evidence and a `Lesson:` line.
 6. **Review** by the reviewer, against the ticket and `SPEC.md`. Approve: status `review/approved`, label `ready-to-merge`.
    Reject: label `changes-requested`, with the reason and a `Lesson:` line.
 7. **Merged** by the human. The PR closes the ticket; the orchestrator sees the change and assigns the next ticket.
 
-A sent-back PR goes back to step 3 on the same branch. The third send-back gets `needs-human` instead (rule 5).
+A sent-back PR goes back to step 3 on the same branch. CI, test and review each have their own budget: the third
+send-back by the same check gets `needs-human` instead (rule 5).
 Cheap checks run first, so the strong reviewer model only sees code that already works.
 
 No agent hands work to another directly. Every 5 minutes the dispatcher reads the labels and wakes the one agent
@@ -141,7 +143,8 @@ The dispatcher logs the model and token counts of every run (`runs.jsonl` on the
 3. **Nobody checks their own work.** Builders never test, review or merge their own PRs. The tester and reviewer never change `app/`.
    The tester may write tests and fixtures in its own PRs; those skip the tester step and go straight to review.
 4. **Every send-back ends with one line:** `Lesson: <one general rule>`, for example `Lesson: compare stable arXiv IDs, never titles.`
-5. **A PR can be sent back twice.** The third time, it gets `needs-human` and waits for the human.
+5. **Each check can send a PR back twice.** CI, test and review are counted separately. The third send-back by the
+   same check gives the PR `needs-human`, and it waits for the human.
 6. **One open ticket per builder.** The orchestrator assigns a builder's next issue only after its previous PR is merged or closed,
    and never gives two builders issues that touch the same file at the same time.
 7. **Stay in your lane.** Never push to `main`. Never change `.github/`, `infra/`, `ops/` or `agents/` (the orchestrator's `LESSONS.md` PR is the one exception).
@@ -168,7 +171,9 @@ Anything with `needs-human` is skipped. When nothing is waiting, no agent runs a
 for 15, 30, 60, then 120 minutes between tries, and the other agents keep working. The item keeps its labels.
 The dispatcher files one `rate-limit` issue for the human and closes it when the agent runs again.
 The wake-up message names the issue or PR. The agent reads the details itself with `gh`.
-**The dispatcher counts send-backs** (rule 5): when a PR gets `changes-requested` for the third time, it swaps the label for `needs-human`.
+**The dispatcher counts send-backs per check** (rule 5): red CI, the tester and the reviewer each get 2.
+On the third send-back by the same check, it swaps `changes-requested` for `needs-human`. A red CI is re-run once per commit
+before it counts, so a flaky test doesn't use up the budget.
 
 ## Commands
 
