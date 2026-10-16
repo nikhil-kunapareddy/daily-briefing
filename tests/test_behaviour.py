@@ -131,11 +131,14 @@ def test_behaviour_healthz(app_client, temp_data_dir):
 
 def test_behaviour_healthz_failed_run(app_client, temp_data_dir):
     """
-    Tests /healthz returns 503 when the latest run has an error.
+    Tests /healthz returns 200 with status "error" when the latest run has an error.
+    Per SPEC rule 17: healthz returns 200 with JSON when the app can read its database.
+    The JSON contains the latest run's time and status ("ok" or "error").
     """
     with patch("app.arxiv.fetch", side_effect=RuntimeError("Failed")):
         job.run(trigger="schedule")
     
     resp = app_client.get("/healthz")
-    assert resp.status_code == 503
+    # Per SPEC rule 17: healthz returns 200 when database is readable
+    assert resp.status_code == 200
     assert resp.get_json()["status"] == "error"

@@ -88,7 +88,7 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
             if papers:
                 briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
             else:
-                # No papers for today – rule 11 line.
+                # No papers for today – rule 11 line.
                 briefing_msg = (
                     "No papers for today yet. arXiv posts new papers each evening; "
                     "the next check is at 02:00 UTC."
@@ -102,7 +102,7 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
             selected_day = day_param
             papers = db.papers_for_day(selected_day)
             if not papers:
-                # No papers for the requested day – spec rule 11: show friendly line.
+                # No papers for the requested day – spec rule 11: show friendly line.
                 if selected_day == today:
                     briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
                 else:
@@ -231,7 +231,7 @@ def create_app() -> Flask:
                 is_new_run = True
 
         if is_new_run:
-            # Run the job synchronously as required by the spec (rule 15).
+            # Run the job synchronously as required by the spec (rule 15).
             try:
                 job.run(run_id=result)
             except Exception:
@@ -254,14 +254,17 @@ def create_app() -> Flask:
 
     @app.route("/healthz", methods=["GET"])
     def healthz():  # noqa: D401
-        """Simple health endpoint used by the spec (rule 17)."""
+        """Simple health endpoint used by the spec (rule 17).
+
+        Returns 200 with JSON when the app can read its database (the latest
+        run's time and status). Returns 503 only when the database cannot be read.
+        """
         status = db.health()
         if status is None:
             # No runs yet – treat as healthy but report empty data.
             return jsonify({}), 200
-        if status["status"] == "ok":
-            return jsonify(status), 200
-        # Any non‑ok status should be reported as a service error.
-        return jsonify(status), 503
+        # Database is readable; return 200 with the latest run's time and status.
+        # The status field in the JSON will be "ok" or "error" per the run.
+        return jsonify(status), 200
 
     return app

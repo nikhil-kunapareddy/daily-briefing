@@ -235,7 +235,9 @@ def test_health_endpoint_statuses():
     fail_id = db.start_run("cron")
     db.finish_run(fail_id, error="boom")
     resp_fail = client.get("/healthz")
-    assert resp_fail.status_code == 503
+    # Per SPEC rule 17: healthz returns 200 with JSON when the app can read its database.
+    # The JSON contains the latest run's time and status ("ok" or "error").
+    assert resp_fail.status_code == 200
     assert resp_fail.get_json()["status"] == "error"
 
 
