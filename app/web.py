@@ -256,10 +256,20 @@ def create_app() -> Flask:
     def healthz():  # noqa: D401
         """Simple health endpoint used by the spec (rule 17).
 
-        Returns 200 with JSON when the app can read its database (the latest
-        run's time and status). Returns 503 only when the database cannot be read.
+        Returns ``200`` with JSON when the app can read its database (the latest
+        run's time and status). Returns ``503`` when the database cannot be read.
+        Any unexpected exception while accessing the database is caught and
+        translated to a ``503`` response, satisfying the lesson to wrap database
+        connection attempts in a ``try``/``except`` block.
         """
-        status = db.health()
+        try:
+            status = db.health()
+        except Exception:
+            # The database is unreadable (e.g., file permission error, corrupt
+            # file, etc.). Return a service‑available status instead of letting
+            # Flask generate a generic 500 error.
+            return jsonify({"error": "database unavailable"}), 503
+
         if status is None:
             # No runs yet – treat as healthy but report empty data.
             return jsonify({}), 200
