@@ -1,15 +1,17 @@
 // OpenClaw config for the four OpenClaw agents (builder-ingest, builder-web, builder-ops, tester).
-// agents/setup.sh copies it to ~agents/.openclaw/openclaw.json. Keys come from the environment (agents/env.sh).
+// agents/setup.sh copies it to ~agents/.openclaw/openclaw.json. Keys come from the environment (agents/env.sh);
+// the Ollama keys go into saved auth profiles that agents/setup.sh makes from them.
 // Model choices and reasons: agents/WORKFLOW.md (Team).
 {
   models: {
     mode: "merge",
     providers: {
       // Ollama Cloud, free plan. Only free models are listed: one paid model's 402 locks this key for all agents.
+      // No apiKey here: a fixed key wins over the saved auth profiles, so OpenClaw could never switch to the
+      // secondary key (DECISIONS #43).
       "ollama-cloud": {
         api: "ollama",
         baseUrl: "https://ollama.com",
-        apiKey: { source: "env", provider: "default", id: "OLLAMA_API_KEY" },
         models: [
           { id: "gpt-oss:120b", name: "gpt-oss:120b", contextWindow: 131072, maxTokens: 32768, reasoning: true },
           // contextWindow: Ollama's /api/show says 262144 for both (2026-10-15). gemma4 is kept at 131072 on purpose:
@@ -80,7 +82,9 @@
         cwd: "/home/agents/work/tester/repo",
         model: {
           primary: "ollama-cloud/gemma4:31b",
-          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+          // No gemini-2.5-flash: its free tier allows 20 requests a day, shared with the reviewer (DECISIONS #42).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-3.5-flash-lite",
+                      "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter/google/gemma-4-31b-it:free"],
         },
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
                  exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },

@@ -150,7 +150,8 @@ agent the next step needs ("Who wakes when", below).
 | tester | OpenClaw | `gemma4:31b` (Google) | Tests each PR branch. Passes it on, or sends it back with evidence. Files bugs |
 | reviewer | Hermes | `gemini-2.5-flash` (Google) | Reads each tested PR against its issue and `SPEC.md`. Approves, or sends it back with a reason |
 
-All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer.
+All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer. Ollama has two keys:
+`OLLAMA_API_KEY` first, `OLLAMA_API_KEY_2` while the first is rate-limited (DECISIONS #43).
 Neither check on a PR uses the builders' model family (OpenAI): the tester runs the code, the reviewer (Google) reads it.
 The reviewer also differs from the orchestrator (NVIDIA), so it doesn't share the orchestrator's reading of the spec.
 
@@ -160,11 +161,12 @@ Models and fallbacks, used when a model is rate-limited or down:
 |---|---|---|---|
 | orchestrator | `nemotron-3-ultra` (Ollama) | `nemotron-3-ultra:free` (OpenRouter) | `gemini-2.5-flash` (Gemini API) |
 | builder-ingest, builder-web, builder-ops | `gpt-oss:120b` (Ollama) | `nemotron-3-ultra` (Ollama) | `gemini-2.5-flash` (Gemini API) |
-| tester | `gemma4:31b` (Ollama) | `gemini-2.5-flash` (Gemini API) | `nemotron-3-ultra:free` (OpenRouter) |
+| tester | `gemma4:31b` (Ollama) | `nemotron-3-ultra` (Ollama) | `gemini-3.5-flash-lite` (Gemini API) |
 | reviewer | `gemini-2.5-flash` (Gemini API) | `gemini-3.5-flash-lite` (Gemini API) | `gemma4:31b` (Ollama) |
 
+- The tester has two more backups, both on OpenRouter: `nemotron-3-ultra:free`, then `gemma-4-31b-it:free` (DECISIONS #42).
 - After a failed run, the dispatcher retries it once on the **1st backup**.
-- The runtime falls back on its own (1st, then 2nd backup) when a model is rate-limited or down.
+- The runtime falls back on its own (1st, then 2nd backup, and so on) when a model is rate-limited or down.
 - All three reviewer models are Google, so a fallback never reviews with the builders' model family.
 
 Context window of each model: the most tokens one request can hold (prompt, files, history and the reply).
@@ -173,11 +175,12 @@ From each provider's API on 2026-10-15 (Ollama `/api/show`, OpenRouter `/models`
 | Model | Provider | Context window | Used by |
 |---|---|---:|---|
 | `gpt-oss:120b` | Ollama Cloud | 131,072 (128k) | builders (main) |
-| `nemotron-3-ultra` | Ollama Cloud | 262,144 (256k) | orchestrator (main), builders (1st backup) |
+| `nemotron-3-ultra` | Ollama Cloud | 262,144 (256k) | orchestrator (main), builders and tester (1st backup) |
 | `gemma4:31b` | Ollama Cloud | 262,144 (256k) | tester (main), reviewer (2nd backup) |
-| `nemotron-3-ultra:free` | OpenRouter | 1,000,000 (1M) | orchestrator (1st backup), tester (2nd backup) |
-| `gemini-2.5-flash` | Gemini API | 1,048,576 (1M) | reviewer (main), tester (1st backup), orchestrator and builders (2nd backup) |
-| `gemini-3.5-flash-lite` | Gemini API | 1,048,576 (1M) | reviewer (1st backup) |
+| `nemotron-3-ultra:free` | OpenRouter | 1,000,000 (1M) | orchestrator (1st backup), tester (3rd backup) |
+| `gemma-4-31b-it:free` | OpenRouter | 262,144 (256k) | tester (4th backup) |
+| `gemini-2.5-flash` | Gemini API | 1,048,576 (1M) | reviewer (main), orchestrator and builders (2nd backup) |
+| `gemini-3.5-flash-lite` | Gemini API | 1,048,576 (1M) | reviewer (1st backup), tester (2nd backup) |
 
 The tightest is `gpt-oss:120b`, the builders' main model, at 128k: keep reads to the files the ticket needs.
 
