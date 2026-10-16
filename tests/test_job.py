@@ -73,3 +73,51 @@ def test_job_first_and_second_run(monkeypatch, tmp_path):
     lock_path = db.config.DATA_ROOT / "run.lock"
     assert not lock_path.exists()
 
+
+def test_job_run_with_precreated_run_id(monkeypatch, tmp_path):
+    """Test job.run() using a pre-created run_id (manual run flow)."""
+    monkeypatch.setenv("DAILY_BRIEFING_DATA", str(tmp_path))
+
+    import importlib, sys
+    repo_root = __import__('pathlib').Path(__file__).resolve().parents[2]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    import importlib, app.config as cfg, app.db as dbmod, app.arxiv as arxiv_mod, app.job as job_mod
+    importlib.reload(cfg)
+    importlib.reload(dbmod)
+    importlib.reload(arxiv_mod)
+    importlib.reload(job_mod)
+    db = dbmod
+    job = job_mod
+    arxiv = arxiv_mod
+
+    import requests
+    xml = _load_fixture()
+
+    def fake_get(*_args, **_kwargs):
+        return DummyResponse(xml, 200)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    # Create a manual run row first (simulating start_manual_run)
+    run_id = db.start_manual_run()
+    assert isinstance(run_id, int)
+
+    # Run job with the pre-created run_id
+    job.run(trigger="manual", run_id=run_id)
+
+    # Verify the run was completed
+    briefing = db.latest_briefing()
+    assert briefing is not None
+    assert briefing["new_count"] == 5
+    assert briefing["is_first_run"] is True
+
+    # Verify the run is marked as finished
+    runs = db.latest_runs(limit=1)
+    assert len(runs) == 1
+    assert runs[0]["id"] == run_id
+    assert runs[0]["ok"] is True
+    assert runs[0]["trigger"] == "manual"
+    assert runs[0]["new_count"] == 5
+
