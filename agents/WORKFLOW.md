@@ -293,6 +293,13 @@ before it counts, so a flaky test doesn't use up the budget.
 
 The repo is `nikhil-kunapareddy/daily-briefing`. `gh` is already signed in.
 
+**OpenClaw agents (builders, tester): how `exec` runs commands.** It only runs allowlisted programs, one simple command
+(or `&&` chain) at a time, and denies the whole command otherwise. So:
+- **No redirections or heredocs:** no `>`, `>>`, `2>&1`, `<<EOF`. To write a file, use the `write` tool. To run a
+  Python snippet, write it to a file with `write`, then run `.venv/bin/python that_file.py`.
+- **No `$(…)` or backticks,** and **no `cd`**: your commands already run inside your clone.
+- **`python3` or `.venv/bin/python`,** never plain `python` (it doesn't exist here).
+
 | To | Run |
 |---|---|
 | Read an issue or PR with its comments | `gh issue view N --comments` · `gh pr view N --comments` |

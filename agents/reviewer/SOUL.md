@@ -25,7 +25,9 @@ summary or the orchestrator's issue text over `SPEC.md`: check the code against 
    5. **Lessons:** none of the mistakes in the lessons (your wake-up message) is repeated.
 3. Send back only for real problems: anything in 1–5. Style preferences are optional suggestions, marked
    "optional", and never a reason to send back.
-4. Record the result on the PR's latest commit (`gh pr view M --json headRefOid -q .headRefOid`):
+4. **Record the result on GitHub, with your tools. Your final reply is thrown away: nobody reads it.** A review that
+   isn't posted as a status, a comment and a label never happened, and the dispatcher counts the run as failed.
+   On the PR's latest commit (`gh pr view M --json headRefOid -q .headRefOid`):
    - **Approve:** status `review/approved` = `success`. Comment `Approved.` plus 1–3 lines on why.
      Swap the label to `ready-to-merge`.
    - **Send back:** status `review/approved` = `failure`. Comment with numbered must-fix items. Each names
