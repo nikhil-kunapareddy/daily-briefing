@@ -1,97 +1,43 @@
-<?xml version='1.0' encoding='UTF-8'?>
-<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
-  <id>https://arxiv.org/api/ZskoLBGoUNtu/812QnPp5RVndqI</id>
-  <title>arXiv Query: search_query=cat:cs.MA&amp;id_list=&amp;start=0&amp;max_results=5</title>
-  <updated>2026-10-16T00:04:56Z</updated>
-  <link href="https://arxiv.org/api/query?search_query=cat:cs.MA&amp;start=0&amp;max_results=5&amp;id_list=" type="application/atom+xml"/>
-  <opensearch:itemsPerPage>5</opensearch:itemsPerPage>
-  <opensearch:totalResults>14108</opensearch:totalResults>
-  <opensearch:startIndex>0</opensearch:startIndex>
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>arXiv cs.MA recent submissions</title>
+  <id>http://arxiv.org/api/</id>
+  <updated>2026-10-16T00:00:00Z</updated>
   <entry>
-    <id>http://arxiv.org/abs/2610.20518v1</id>
-    <title>The Wealth of Agents: Scaling Agentic AI Across Developers</title>
-    <updated>2026-10-14T17:19:11Z</updated>
-    <link href="https://arxiv.org/abs/2610.20518v1" rel="alternate" type="text/html"/>
-    <link href="https://arxiv.org/pdf/2610.20518v1" rel="related" type="application/pdf" title="pdf"/>
-    
-    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
-    <published>2026-10-14T17:19:11Z</published>
-    <arxiv:primary_category term="cs.AI"/>
-    
-    
-    
-    
+    <id>http://arxiv.org/abs/2610.10001v1</id>
+    <title>First Paper Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10001v1.pdf" />
+    <published>2026-10-10T12:00:00Z</published>
+    <updated>2026-10-10T12:00:00Z</updated>
   </entry>
   <entry>
-    <id>http://arxiv.org/abs/2610.20437v1</id>
-    <title>From Training to Escalation: Forensic Analysis and Local Recreation of RL/RLHF-Induced Privilege Escalation in AI Agents (CVE-2026-65616)</title>
-    <updated>2026-10-14T16:28:09Z</updated>
-    <link href="https://arxiv.org/abs/2610.20437v1" rel="alternate" type="text/html"/>
-    <link href="https://arxiv.org/pdf/2610.20437v1" rel="related" type="application/pdf" title="pdf"/>
-    
-    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
-    <published>2026-10-14T16:28:09Z</published>
-    <arxiv:comment>9 pages, 1 figure. Code and replication environments available at https://github.com/alixiacf/hpim-training-lab DOI:10.5281/zenodo.22817059 and https://github.com/alixiacf/rep-openai-artifactory DOI:10.5281/zenodo.22817059</arxiv:comment>
-    <arxiv:primary_category term="cs.MA"/>
-    
+    <id>http://arxiv.org/abs/2610.10002v2</id>
+    <title>Second   Paper   Title with   spaces </title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10002v2.pdf" />
+    <published>2026-10-11T12:00:00Z</published>
+    <updated>2026-10-11T13:00:00Z</updated>
   </entry>
   <entry>
-    <id>http://arxiv.org/abs/2610.20399v1</id>
-    <title>Cortex: Consolidating Context into Parametric Memory</title>
-    <updated>2026-10-14T16:03:01Z</updated>
-    <link href="https://arxiv.org/abs/2610.20399v1" rel="alternate" type="text/html"/>
-    <link href="https://arxiv.org/pdf/2610.20399v1" rel="related" type="application/pdf" title="pdf"/>
-    
-    <category term="cs.CL" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.CV" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
-    <published>2026-10-14T16:03:01Z</published>
-    <arxiv:comment>Technical report</arxiv:comment>
-    <arxiv:primary_category term="cs.CL"/>
-    
-    
-    
-    
-    
-    
-    
-    
+    <id>http://arxiv.org/abs/2610.10003v1</id>
+    <title>Third
+Paper	Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10003v1.pdf" />
+    <published>2026-10-12T12:00:00Z</published>
+    <updated>2026-10-12T12:30:00Z</updated>
   </entry>
   <entry>
-    <id>http://arxiv.org/abs/2610.20277v1</id>
-    <title>TANGO: RNA Topology and Geometry Co-Design</title>
-    <updated>2026-10-14T14:37:51Z</updated>
-    <link href="https://arxiv.org/abs/2610.20277v1" rel="alternate" type="text/html"/>
-    <link href="https://arxiv.org/pdf/2610.20277v1" rel="related" type="application/pdf" title="pdf"/>
-    
-    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
-    <published>2026-10-14T14:37:51Z</published>
-    <arxiv:comment>NeurIPS 2026</arxiv:comment>
-    <arxiv:primary_category term="cs.LG"/>
-    
-    
-    
+    <id>http://arxiv.org/abs/2610.10004v1</id>
+    <title>Fourth Paper Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10004v1.pdf" />
+    <published>2026-10-13T12:00:00Z</published>
+    <updated>2026-10-13T12:00:00Z</updated>
   </entry>
   <entry>
-    <id>http://arxiv.org/abs/2610.20205v1</id>
-    <title>What and Where in Identifying and Quantifying Conventions in Humans and AI Agents</title>
-    <updated>2026-10-14T13:49:46Z</updated>
-    <link href="https://arxiv.org/abs/2610.20205v1" rel="alternate" type="text/html"/>
-    <link href="https://arxiv.org/pdf/2610.20205v1" rel="related" type="application/pdf" title="pdf"/>
-    
-    <category term="cs.HC" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.AI" scheme="http://arxiv.org/schemas/atom"/>
-    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
-    <published>2026-10-14T13:49:46Z</published>
-    <arxiv:comment>32 pages, 12 figures, 6 tables</arxiv:comment>
-    <arxiv:primary_category term="cs.HC"/>
-    
-    
+    <id>http://arxiv.org/abs/2610.10005v1</id>
+    <title>Fifth Paper Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10005v1.pdf" />
+    <published>2026-10-14T12:00:00Z</published>
+    <updated>2026-10-14T12:00:00Z</updated>
   </entry>
 </feed>
+
