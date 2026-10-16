@@ -241,8 +241,10 @@ def last_briefing_with_papers() -> Optional[Dict[str, Any]]:
 def latest_runs(limit: int = 10) -> List[Dict[str, Any]]:
     """Return a list of recent runs ordered newest first.
 
-    Each dict contains ``time``, ``ok`` (bool), ``trigger``, ``new_count`` and a
+    Each dict contains ``id``, ``time``, ``ok`` (bool | None), ``trigger``, ``new_count`` and a
     short ``error_short`` (first line of error if any).
+    ``ok`` is ``None`` for in-progress runs (``finished_at`` is NULL), ``True`` for
+    successful finished runs, and ``False`` for failed finished runs.
     """
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
@@ -252,10 +254,17 @@ def latest_runs(limit: int = 10) -> List[Dict[str, Any]]:
     )
     runs: List[Dict[str, Any]] = []
     for r in cur.fetchall():
+        # A run is considered "ok" (shown with a checkmark) only when it has
+        # finished and did not error. In-progress runs have ``finished_at`` NULL
+        # and should have ``ok`` set to ``None`` so the UI can hide the checkmark.
+        ok_flag: bool | None = None
+        if r["finished_at"] is not None:
+            ok_flag = r["error"] is None
         runs.append(
             {
+                "id": r["id"],
                 "time": r["started_at"],
-                "ok": r["error"] is None,
+                "ok": ok_flag,
                 "trigger": r["trigger"],
                 "new_count": r["new_count"],
                 "error_short": (r["error"].splitlines()[0] if r["error"] else None),

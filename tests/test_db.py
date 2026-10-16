@@ -56,8 +56,14 @@ def test_start_run_trigger():
     runs = db.latest_runs(limit=1)
     assert len(runs) == 1
     assert runs[0]["trigger"] == "cron"
-    assert runs[0]["ok"] is True
+    assert runs[0]["ok"] is None  # in-progress run
     assert runs[0]["new_count"] == 0
+    assert runs[0]["id"] == run_id
+
+    # Now finish the run
+    db.finish_run(run_id)
+    runs = db.latest_runs(limit=1)
+    assert runs[0]["ok"] is True
 
 
 def test_manual_rate_limit_returns_wait():
@@ -279,3 +285,30 @@ def test_multiple_versions_same_stable_id():
     db.finish_run(run_id)
     briefing = db.latest_briefing()
     assert len(briefing["papers"]) == 2
+
+
+def test_latest_runs_in_progress_shows_none_ok():
+    """Test that latest_runs() returns ok=None for in-progress runs."""
+    # Create a run but don't finish it (in-progress)
+    run_id = db.start_run("test")
+    # Note: we don't call finish_run, so finished_at remains NULL
+
+    runs = db.latest_runs(limit=1)
+    assert len(runs) == 1
+    assert runs[0]["id"] == run_id
+    assert runs[0]["ok"] is None  # in-progress run should have ok=None
+    assert runs[0]["trigger"] == "test"
+    assert runs[0]["new_count"] == 0
+    assert runs[0]["error_short"] is None
+
+    # Now finish the run
+    db.finish_run(run_id, new_count=3)
+    runs = db.latest_runs(limit=1)
+    assert runs[0]["ok"] is True  # finished successfully
+
+    # Test with a failed run
+    run_id2 = db.start_run("test")
+    db.finish_run(run_id2, error="Something went wrong")
+    runs = db.latest_runs(limit=1)
+    assert runs[0]["ok"] is False
+    assert runs[0]["error_short"] == "Something went wrong"  # first line of error
