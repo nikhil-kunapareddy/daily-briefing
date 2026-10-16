@@ -1,5 +1,6 @@
 import os
 import pytest
+from datetime import datetime, timedelta, date
 
 # The repository root is added to sys.path by the existing test fixtures
 # (see tests/conftest.py).  We'll follow the same pattern to ensure imports
@@ -112,9 +113,11 @@ def test_index_shows_first_run_message():
     db.save_papers(run_id, papers)
     db.finish_run(run_id, new_count=1)
 
-    resp = client.get("/")
+    # Request the explicit day of the paper instead of the generic '/' which shows today.
+    resp = client.get("/?day=2026-10-14")
     assert resp.status_code == 200
-    assert b"First run: everything is new" in resp.data
+    # The page should list the paper and indicate the count for that day.
+    assert b"1 new paper from this day" in resp.data
     assert b"Test Paper One" in resp.data
     assert b"10.48550/arXiv.2610.12345" in resp.data
 
@@ -141,11 +144,15 @@ def test_index_shows_no_new_with_previous_briefing():
 
     resp = client.get("/")
     assert resp.status_code == 200
-    assert b"No new submissions since the last run" in resp.data
+    # The page for today (no papers) should show the rule 11 line for today.
+    assert b"No papers for today yet" in resp.data
     assert b"checked" in resp.data
     assert b"UTC" in resp.data
-    # Should show the previous briefing
-    assert b"Test Paper One" in resp.data
+    # Should show the previous briefing's papers when we request that day.
+    resp_day = client.get("/?day=2026-10-14")
+    assert resp_day.status_code == 200
+    assert b"Test Paper One" in resp_day.data
+    assert b"10.48550/arXiv.2610.12345" in resp_day.data
 
 
 def test_run_now_creates_run_and_rate_limits(monkeypatch):
@@ -279,7 +286,8 @@ def test_responsive_classes_present():
     db.save_papers(run_id, papers)
     db.finish_run(run_id, new_count=1)
 
-    resp = client.get("/")
+    # View the day with papers
+    resp = client.get("/?day=2026-10-14")
     assert resp.status_code == 200
     # Check for data-label attributes on table cells
     assert b'data-label="S.NO"' in resp.data
@@ -306,7 +314,7 @@ def test_paper_title_bold():
     db.save_papers(run_id, papers)
     db.finish_run(run_id, new_count=1)
 
-    resp = client.get("/")
+    resp = client.get("/?day=2026-10-14")
     assert resp.status_code == 200
     # Title should be wrapped in <strong>
     assert b"<strong>Test Paper</strong>" in resp.data
@@ -326,18 +334,35 @@ def test_doi_format():
     db.save_papers(run_id, papers)
     db.finish_run(run_id, new_count=1)
 
-    resp = client.get("/")
+    resp = client.get("/?day=2026-10-14")
     assert resp.status_code == 200
     assert b"10.48550/arXiv.2610.12345" in resp.data
 
 
 def test_no_new_submissions_text():
+    """Test that the run history shows 'no new submissions' for a run with zero new papers."""
     client = app.test_client()
-    run_id = db.start_manual_run()
-    db.finish_run(run_id, new_count=0)
+    # First run with papers (so it's not the first run).
+    run_id1 = db.start_run("cron")
+    papers1 = [{
+        "stable_id": "2610.12345",
+        "version": "v1",
+        "title": "Test Paper One",
+        "pdf_link": "https://arxiv.org/pdf/2610.12345.pdf",
+        "published": "2026-10-14T00:00:00Z",
+        "updated": "2026-10-14T00:00:00Z",
+    }]
+    db.save_papers(run_id1, papers1)
+    db.finish_run(run_id1, new_count=1)
+
+    # Second run with no new papers.
+    run_id2 = db.start_run("cron")
+    db.save_papers(run_id2, papers1)
+    db.finish_run(run_id2, new_count=0)
 
     resp = client.get("/")
     assert resp.status_code == 200
+    # The history table should contain the phrase for zero new papers.
     assert b"no new submissions" in resp.data.lower()
 
 
@@ -369,8 +394,9 @@ def test_rate_limited_page_shows_briefing_date_and_times():
     resp1 = client.post("/run-now", follow_redirects=False)
     assert resp1.status_code in (302, 303)
     
-    # Second POST should be rate-limited and show the page with date/times
-    resp2 = client.post("/run-now", follow_redirects=True)
+    # Second POST should be rate-limited and show the page with date/times.
+    # Include the day parameter so the page shows the papers for that day.
+    resp2 = client.post("/run-now?day=2026-10-14", follow_redirects=True)
     assert resp2.status_code == 200
     assert b"Try again in" in resp2.data
     
@@ -421,7 +447,7 @@ def test_rate_limited_page_shows_no_new_state():
     assert resp1.status_code in (302, 303)
     
     # Second POST should be rate-limited and show the page
-    resp2 = client.post("/run-now", follow_redirects=True)
+    resp2 = client.post("/run-now?day=2026-10-14", follow_redirects=True)
     assert resp2.status_code == 200
     assert b"Try again in" in resp2.data
     
@@ -440,3 +466,63 @@ def test_rate_limited_page_shows_no_new_state():
     assert b"DOI" in resp2.data
     assert b"PDF" in resp2.data
 
+
+def test_issue_42_day_navigation_and_boundaries():
+    """Validate the page behaviour required by issue #42.
+
+    - The page shows a single UTC day with arrows.
+    - The day label matches the selected date.
+    - A request for a day before the oldest paper day returns 404.
+    - A request for a future day returns 404.
+    - A malformed date returns 404.
+    """
+    client = app.test_client()
+
+    # Create runs for two consecutive days using cron trigger to avoid rate limits.
+    # Day 1: 2026-10-13
+    run1 = db.start_run("cron")
+    paper1 = [{
+        "stable_id": "2610.11111",
+        "version": "v1",
+        "title": "Paper Day One",
+        "pdf_link": "https://arxiv.org/pdf/2610.11111.pdf",
+        "published": "2026-10-13T00:00:00Z",
+        "updated": "2026-10-13T00:00:00Z",
+    }]
+    db.save_papers(run1, paper1)
+    db.finish_run(run1, new_count=1)
+
+    # Day 2: 2026-10-14
+    run2 = db.start_run("cron")
+    paper2 = [{
+        "stable_id": "2610.22222",
+        "version": "v1",
+        "title": "Paper Day Two",
+        "pdf_link": "https://arxiv.org/pdf/2610.22222.pdf",
+        "published": "2026-10-14T00:00:00Z",
+        "updated": "2026-10-14T00:00:00Z",
+    }]
+    db.save_papers(run2, paper2)
+    db.finish_run(run2, new_count=1)
+
+    # Verify navigation arrows for the middle day (2026-10-14)
+    resp_mid = client.get("/?day=2026-10-14")
+    assert resp_mid.status_code == 200
+    # The rendered page should contain the previous and next day links.
+    assert b"2026-10-13" in resp_mid.data  # previous day appears in the URL
+    # Next day (today) may be after the latest paper day; ensure link exists but may be disabled.
+    # The presence of the arrow symbol indicates the UI renders it.
+    assert "→" in resp_mid.data.decode("utf-8")
+
+    # Request a day before the oldest paper day – should be 404.
+    resp_before = client.get("/?day=2026-10-12")
+    assert resp_before.status_code == 404
+
+    # Request a future day – should be 404.
+    future = (datetime.utcnow().date() + timedelta(days=1)).isoformat()
+    resp_future = client.get(f"/?day={future}")
+    assert resp_future.status_code == 404
+
+    # Malformed date should be 404.
+    resp_bad = client.get("/?day=not-a-date")
+    assert resp_bad.status_code == 404
