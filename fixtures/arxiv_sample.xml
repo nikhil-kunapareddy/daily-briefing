@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>arXiv cs.MA recent submissions</title>
+  <id>http://arxiv.org/api/</id>
+  <updated>2026-10-16T00:00:00Z</updated>
+  <entry>
+    <id>http://arxiv.org/abs/2610.10001v1</id>
+    <title>First Paper Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10001v1.pdf" />
+    <published>2026-10-10T12:00:00Z</published>
+    <updated>2026-10-10T12:00:00Z</updated>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.10002v2</id>
+    <title>Second   Paper   Title with   spaces </title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10002v2.pdf" />
+    <published>2026-10-11T12:00:00Z</published>
+    <updated>2026-10-11T13:00:00Z</updated>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.10003v1</id>
+    <title>Third
+Paper	Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10003v1.pdf" />
+    <published>2026-10-12T12:00:00Z</published>
+    <updated>2026-10-12T12:30:00Z</updated>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.10004v1</id>
+    <title>Fourth Paper Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10004v1.pdf" />
+    <published>2026-10-13T12:00:00Z</published>
+    <updated>2026-10-13T12:00:00Z</updated>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2610.10005v1</id>
+    <title>Fifth Paper Title</title>
+    <link title="pdf" href="https://arxiv.org/pdf/2610.10005v1.pdf" />
+    <published>2026-10-14T12:00:00Z</published>
+    <updated>2026-10-14T12:00:00Z</updated>
+  </entry>
+</feed>
+
