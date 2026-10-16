@@ -7,7 +7,7 @@ opened.
 
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import config
@@ -289,3 +289,51 @@ def health() -> Optional[Dict[str, Any]]:
         return None
     status = "ok" if row["error"] is None else "error"
     return {"latest_run_time": row["started_at"], "status": status}
+
+
+def papers_for_day(day: date) -> List[Dict[str, Any]]:
+    """Return papers published on the given UTC day, ordered newest first.
+
+    Args:
+        day: A ``date`` representing the UTC day.
+
+    Returns:
+        A list of dicts, each with keys ``stable_id``, ``version``, ``title``,
+        ``pdf_link``, ``published``, ``updated``. Ordered by ``published`` DESC.
+    """
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    # The published field is stored as ISO string with timezone (e.g., 2026-10-10T12:00:00Z).
+    # We extract the date part and compare with the given day.
+    day_str = day.isoformat()
+    cur.execute(
+        """
+        SELECT stable_id, version, title, pdf_link, published, updated
+        FROM papers
+        WHERE date(published) = ?
+        ORDER BY published DESC
+        """,
+        (day_str,),
+    )
+    return [dict(r) for r in cur.fetchall()]
+
+
+def oldest_paper_day() -> Optional[date]:
+    """Return the earliest UTC date among saved papers, or ``None`` if no papers exist.
+
+    Returns:
+        A ``date`` of the oldest paper's published date, or ``None``.
+    """
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT MIN(date(published)) FROM papers
+        """
+    )
+    row = cur.fetchone()
+    if not row or row[0] is None:
+        return None
+    return date.fromisoformat(row[0])

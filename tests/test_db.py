@@ -312,3 +312,101 @@ def test_latest_runs_in_progress_shows_none_ok():
     runs = db.latest_runs(limit=1)
     assert runs[0]["ok"] is False
     assert runs[0]["error_short"] == "Something went wrong"  # first line of error
+
+
+from datetime import date
+
+def test_papers_for_day_with_papers():
+    """Test papers_for_day returns papers for a day that has papers."""
+    run_id = db.start_run("test")
+    papers = [
+        {
+            "stable_id": "2610.11111",
+            "version": "v1",
+            "title": "Paper 1",
+            "pdf_link": "https://arxiv.org/pdf/2610.11111v1.pdf",
+            "published": "2026-10-10T12:00:00Z",
+            "updated": "2026-10-10T12:00:00Z",
+        },
+        {
+            "stable_id": "2610.22222",
+            "version": "v1",
+            "title": "Paper 2",
+            "pdf_link": "https://arxiv.org/pdf/2610.22222v1.pdf",
+            "published": "2026-10-10T14:00:00Z",
+            "updated": "2026-10-10T14:00:00Z",
+        },
+    ]
+    db.save_papers(run_id, papers)
+    db.finish_run(run_id, new_count=2)
+
+    result = db.papers_for_day(date(2026, 10, 10))
+    assert len(result) == 2
+    # Should be ordered by published DESC (newest first)
+    assert result[0]["stable_id"] == "2610.22222"  # 14:00 is newer
+    assert result[1]["stable_id"] == "2610.11111"  # 12:00 is older
+    # Check all required fields present
+    for p in result:
+        assert set(p.keys()) == {"stable_id", "version", "title", "pdf_link", "published", "updated"}
+
+
+def test_papers_for_day_no_papers():
+    """Test papers_for_day returns empty list for a day with no papers."""
+    run_id = db.start_run("test")
+    papers = [
+        {
+            "stable_id": "2610.11111",
+            "version": "v1",
+            "title": "Paper 1",
+            "pdf_link": "https://arxiv.org/pdf/2610.11111v1.pdf",
+            "published": "2026-10-10T12:00:00Z",
+            "updated": "2026-10-10T12:00:00Z",
+        },
+    ]
+    db.save_papers(run_id, papers)
+    db.finish_run(run_id, new_count=1)
+
+    # Query a different day
+    result = db.papers_for_day(date(2026, 10, 11))
+    assert result == []
+
+
+def test_papers_for_day_empty_database():
+    """Test papers_for_day returns empty list when database has no papers."""
+    result = db.papers_for_day(date(2026, 10, 10))
+    assert result == []
+
+
+def test_oldest_paper_day_with_papers():
+    """Test oldest_paper_day returns the earliest date when papers exist."""
+    run_id = db.start_run("test")
+    papers = [
+        {
+            "stable_id": "2610.11111",
+            "version": "v1",
+            "title": "Paper 1",
+            "pdf_link": "https://arxiv.org/pdf/2610.11111v1.pdf",
+            "published": "2026-10-12T12:00:00Z",
+            "updated": "2026-10-12T12:00:00Z",
+        },
+        {
+            "stable_id": "2610.22222",
+            "version": "v1",
+            "title": "Paper 2",
+            "pdf_link": "https://arxiv.org/pdf/2610.22222v1.pdf",
+            "published": "2026-10-10T14:00:00Z",
+            "updated": "2026-10-10T14:00:00Z",
+        },
+    ]
+    db.save_papers(run_id, papers)
+    db.finish_run(run_id, new_count=2)
+
+    result = db.oldest_paper_day()
+    assert result == date(2026, 10, 10)
+
+
+def test_oldest_paper_day_empty_database():
+    """Test oldest_paper_day returns None when database has no papers."""
+    result = db.oldest_paper_day()
+    assert result is None
+
