@@ -291,16 +291,30 @@ def health() -> Optional[Dict[str, Any]]:
     return {"latest_run_time": row["started_at"], "status": status}
 
 
-def papers_for_day(day: date) -> List[Dict[str, Any]]:
+def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
     """Return papers published on the given UTC day, ordered newest first.
 
+    The web layer may pass a ``str`` (e.g. from a query parameter) instead of a
+    ``datetime.date`` instance. This function now accepts both and attempts to
+    coerce a string to a ``date`` using ``date.fromisoformat``. If conversion
+    fails, a ``ValueError`` is raised to make the caller aware of the invalid
+    input.
+
     Args:
-        day: A ``date`` representing the UTC day.
+        day: Either a ``date`` object or an ISO‑format ``YYYY‑MM‑DD`` string
+            representing the UTC day.
 
     Returns:
         A list of dicts, each with keys ``stable_id``, ``version``, ``title``,
         ``pdf_link``, ``published``, ``updated``. Ordered by ``published`` DESC.
     """
+    # Accept string input from the web layer and convert to ``date``.
+    if isinstance(day, str):
+        try:
+            day = date.fromisoformat(day)
+        except Exception as exc:
+            raise ValueError(f"Invalid date string '{day}': {exc}") from exc
+
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
