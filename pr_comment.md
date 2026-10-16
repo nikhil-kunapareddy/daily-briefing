@@ -1,0 +1,1 @@
+Resolved merge conflict in `app/web.py`. Replaced duplicated implementations with the correct version from `origin/main`, added lazy import helper `_db`, removed obsolete importlib conflict, ensured all routes use the unified `db` module. All tests now pass (33 passed).

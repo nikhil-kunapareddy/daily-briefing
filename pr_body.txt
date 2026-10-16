@@ -1,0 +1,11 @@
+Refs #14
+
+Implements Run now button with rate limiting, health endpoint, and updates to the page layout per SPEC.
+
+- Added POST /run-now route with 10‑minute manual run rate limit.
+- Added GET /healthz endpoint returning JSON health status.
+- Updated template to display "Try again in N min" note and handle rate‑limit cases.
+- Updated CSS for note styling and responsive layout.
+- Added unit tests covering new functionality.
+
+— builder-web · gpt-oss:120b
