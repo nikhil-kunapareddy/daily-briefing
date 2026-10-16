@@ -47,23 +47,31 @@ def _acquire_lock() -> Path:
             time.sleep(1)
 
 
-def run(trigger: str = "schedule", *, run_id: int | None = None) -> None:
+def run(trigger: str = "schedule", run_id: int | None = None) -> None:
     """Execute a single ingest run.
 
-    Supports both scheduled runs (default) and manual runs invoked via the ``Run now`` endpoint. If ``run_id`` is ``None`` a new run record is created via :func:`app.db.start_run`. When a ``run_id`` is supplied (the manual case) the existing run is used and no additional row is inserted.
+    ``trigger`` is stored in the ``runs`` table and distinguishes scheduled
+    runs from manual ``run‑now`` runs.
+
+    ``run_id`` is optional. When provided the function **must not** create a new
+    run row – it will use the existing ``run_id`` (this is required for the new
+    manual‑run API that creates the row in a single transaction). When ``run_id``
+    is ``None`` the existing behaviour (creating a new row via :func:`db.start_run`)
+    is retained.
     """
     lock_path = _acquire_lock()
     try:
-        # Determine which run identifier to use.
+        # If a run_id is supplied we assume the caller has already inserted a row
+        # (e.g. via ``start_manual_run``). Otherwise we create a fresh one.
         if run_id is None:
-            # Scheduled execution – create a fresh run entry.
             run_id = db.start_run(trigger)
-        # Otherwise we already have the manual run ID.
-
+        # The rest of the logic is unchanged: fetch papers, compute new papers
+        # based on previously *successful* runs, save everything and finish the
+        # run. Any exception from ``fetch`` results in a failed run with a new
+        # count of 0.
         try:
             papers = arxiv.fetch()
         except Exception as exc:  # pylint: disable=broad-except
-            # Any exception from ``fetch`` counts as a failed run.
             db.finish_run(run_id, error=str(exc), new_count=0)
             return
 
