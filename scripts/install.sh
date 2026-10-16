@@ -31,6 +31,9 @@ SERVICE_NAME=daily-briefing.service
 SYSTEMD_DIR=${SYSTEMD_DIR:-$HOME/.config/systemd/user}
 SERVICE_PATH="$SYSTEMD_DIR/$SERVICE_NAME"
 
+# Absolute path to the repository root (where this script lives one level up).
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
 # Crontab line for the daily job.
 CRON_LINE="0 2 * * * python -m app.job >> /var/log/daily-briefing/job.log 2>&1"
 
@@ -95,17 +98,21 @@ fi
 # 4. Install user systemd service
 ###############################
 ensure_dir "$SYSTEMD_DIR"
-cat >"$SERVICE_PATH" <<'EOF'
+[ -n "$REPO_ROOT" ] && echo "Using REPO_ROOT=$REPO_ROOT"
+cat >"$SERVICE_PATH" <<EOF
 [Unit]
 Description=Daily Briefing web service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$HOME/.daily-briefing-venv/bin/gunicorn -w 2 -t 60 -b 127.0.0.1:8000 app.main:app
+# Use absolute path for gunicorn executable and correct app entry point
+ExecStart=$VENV_DIR/bin/gunicorn -w 2 -t 60 -b 127.0.0.1:8000 app.web:create_app()
 Restart=on-failure
 StandardError=append:/var/log/daily-briefing/web.log
 StandardOutput=append:/var/log/daily-briefing/web.log
+Environment=DAILY_BRIEFING_DATA=/var/lib/daily-briefing
+WorkingDirectory=$REPO_ROOT
 
 [Install]
 WantedBy=default.target
@@ -119,6 +126,11 @@ loginctl enable-linger "$(basename "$HOME")" || true
 # Reload daemon and (re)start the service – ignore errors if systemd is not present.
 systemctl --user daemon-reload || true
 systemctl --user restart "$SERVICE_NAME" || true
+
+# Verify the service started; if it failed (e.g., no systemd in test env), just warn.
+if ! systemctl --user is-active --quiet "$SERVICE_NAME"; then
+  log "Warning: Service $SERVICE_NAME failed to start (ignored in test mode)"
+fi
 
 ###############################
 # 5. Ensure crontab line exists (idempotent)
