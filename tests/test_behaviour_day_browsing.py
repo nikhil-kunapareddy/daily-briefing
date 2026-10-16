@@ -111,9 +111,13 @@ def test_day_browsing_no_papers(app_client, temp_data_dir):
     resp = app_client.get("/?day=2026-10-11")
     assert resp.status_code == 200
     assert b"No new papers from" in resp.data
-    # Table should not exist
-    assert b"<thead>" not in resp.data
-    assert b"<table>" not in resp.data
+    # Papers table should not exist (but run history table should still be present)
+    assert b"S.NO" not in resp.data
+    assert b"DOI" not in resp.data
+    assert b"TITLE" not in resp.data
+    # Run history table should still be present
+    assert b"Run history" in resp.data
+    assert b"TIME" in resp.data
 
 def test_day_browsing_out_of_range(app_client, temp_data_dir):
     """
