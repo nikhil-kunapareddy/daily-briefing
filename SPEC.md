@@ -12,7 +12,8 @@ systems), saves every run, and shows what is new since the last run.
   `https://export.arxiv.org/api/query?search_query=cat:cs.MA&sortBy=submittedDate&sortOrder=descending&max_results=5`
   Sorted by submission date, so a new version of an old paper never takes a new paper's place.
 - **Schedule:** every day at 02:00 UTC (after arXiv's evening announcement, with or without US daylight saving).
-- **Public page:** the latest briefing at the top, the run history below. No login.
+- **Public page:** one UTC day's papers at a time, starting with today, with arrows to earlier days; the run history
+  below. No login.
 - **Run now:** a button on the page that starts a run, rate-limited.
 
 **How a run works** (rule numbers in brackets). Both cron jobs are here: the app's 02:00 job, and the deploy check
@@ -101,14 +102,20 @@ flowchart TD
    to this repo.
 
 **The page** (`GET /`)
-10. **Latest briefing** at the top: the date of the latest successful run ("Wed 14 Oct 2026"), then "N new since the
-    last run" (or "First run: everything is new"), then the new papers, newest first, as a table:
+10. **One UTC day at a time.** A day's papers are the saved papers whose `<published>` date (UTC) is that day, so the
+    date shown is the day the papers were submitted, never the day the app ran. Newest first, as a table:
     **S.No** (1, 2, 3…) · **Title** (plain text) · **DOI** (`10.48550/arXiv.<stable ID>`) · **PDF** (a link to the
-    entry's `<link title="pdf">`).
-11. **When nothing is new**, say so in one line, never as an empty table: "No new submissions since the last run
-    (checked 14:32 UTC)." Under it, the briefing from the last run that did find papers, with its own date.
-12. **Run history** below: the newest 10 runs, newest first, each with its time (UTC), ✓ or ✗, schedule or Run now,
-    and the new count ("no new submissions" instead of 0). A failed row shows its error in short.
+    entry's `<link title="pdf">`). Above the table: the day's date between two arrows ("← Wed 14 Oct 2026 →"), then
+    "N new papers from this day · Last checked 02:00 UTC" (the latest successful run). `/` is today (UTC), and
+    `/?day=YYYY-MM-DD` is any other day. ← goes to the day before and → to the day after, as plain links. On the
+    oldest day that has papers, ← is greyed out and does nothing; on today, → is. A day before that or after today,
+    or a malformed date, answers 404.
+11. **A day with no papers** says so in one friendly line instead of the table, never as an empty table, and its
+    arrows stay. Today: "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
+    Any earlier day: "No new papers from Sat 17 Oct 2026." The line under the date then reads only "Last checked … UTC".
+12. **Run history** below, the same on every day: the newest 10 runs, newest first, each with its time (UTC), ✓ or ✗,
+    schedule or Run now, and the new count ("no new submissions" instead of 0, and "First run: everything is new" on
+    the first successful run). A failed row shows its error in short.
 13. Readable on a phone; times in UTC and say so. One column, at most 760px wide, the system font, one stylesheet
     served by the app, no JavaScript, no CDN. The look is rules 18–19.
 14. The footer says: "Thank you to arXiv for use of its open access interoperability." Nothing suggests arXiv endorses the app.
@@ -130,14 +137,14 @@ flowchart TD
     New papers in arXiv cs.MA (multi-agent systems),    At most once every 10 minutes
     every day at 02:00 UTC
     ───────────────────────────────────────────────────────────────────────
-    ▌No new submissions since the last run (checked 14:32 UTC).    (only when rule 11 applies)
-
-    Wed 14 Oct 2026
-    5 new since the last run · Last checked 02:00 UTC
+    ←  Wed 14 Oct 2026  →
+    5 new papers from this day · Last checked 02:00 UTC
     ┌──────┬──────────────────────────────────────────┬───────────────────────────┬─────┐
     │ S.NO │ TITLE                                    │ DOI                       │ PDF │
     │ 1    │ The Wealth of Agents: Scaling Agentic AI │ 10.48550/arXiv.2610.20518 │ PDF │
     └──────┴──────────────────────────────────────────┴───────────────────────────┴─────┘
+    On a day with no papers (rule 11), in place of the table:
+    ▌No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC.
 
     Run history
     All times UTC.
@@ -149,7 +156,8 @@ flowchart TD
     ```
     "Try again in N min" (rule 16) appears as the same kind of note, under the header.
 19. **Style.** One accent colour for links and the Run now button. Titles bold; DOIs in a smaller, grey, monospace
-    font; table headers small, grey and upper-case. The "no new submissions" and "Try again" lines are a pale yellow
+    font; table headers small, grey and upper-case. The day's date is bold, with the arrows in the accent colour on
+    either side; a greyed-out arrow is plain grey text. The "No papers" and "Try again" lines are a pale yellow
     note with a darker left border. ✓ green, ✗ red. Light or dark from the visitor's system setting.
     **On screens 600px wide or less:** the table's header row hides, and each paper's DOI and PDF link sit on one
     line under its title; each history row becomes a small card (time, ✓ or ✗ and trigger on one line, the result
@@ -173,7 +181,8 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
 
 **Touch points between lanes** (fixed here; they don't change unless this spec does):
 - The web side reads data **only** through `app/db.py`: `latest_briefing()`, `last_briefing_with_papers()`,
-  `latest_runs(limit)`, `health()`. Each returns plain dicts and lists.
+  `latest_runs(limit)`, `health()`, `papers_for_day(day)` (that UTC day's papers, newest first) and
+  `oldest_paper_day()` (a date, or `None` when nothing is saved). Each returns plain dicts and lists.
 - Run now calls `start_manual_run()` in `app/db.py` (the rate-limit check and the new row, one transaction), which
   returns the run's id or how many minutes to wait, then `app.job.run(run_id)`. The schedule runs `python -m app.job`.
 - The job writes **only** through `app/db.py`: `start_run(trigger)`, `save_papers(run_id, papers)`,
@@ -189,14 +198,18 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
 
 ## Done when
 
-1. `https://dailyresearch.duckdns.org` shows the latest briefing (the date, how many are new, and the table of
-   S.No, Title, DOI and PDF) and the run history, laid out and styled as rules 18–19 say, on a desktop and a phone.
+1. `https://dailyresearch.duckdns.org` shows today's page, ← reaches each earlier day (the date between arrows, how
+   many are new, and the table of S.No, Title, DOI and PDF, or the one-line message), and the run history, laid out
+   and styled as rules 18–19 say, on a desktop and a phone.
 2. The history has at least 3 real runs, and one of them found no new submissions (Run now right after another run).
 3. Run now adds a row. A second press within 10 minutes shows "Try again in N min" and adds no row.
 4. The 02:00 UTC schedule is installed, and `scripts/install.sh` can be run twice in a row without errors or
    duplicates, leaving a database backup each time and never more than 10.
 5. `python -m pytest` passes in CI, and the tests cover at least:
-   - the same fixture run twice: the first run's page says "First run: everything is new", the second has 0 new;
+   - the same fixture run twice: the first run's history row says "First run: everything is new", the second has 0 new;
+   - days: each paper is listed under its `<published>` UTC date; ← and → move one day and are greyed out at the
+     oldest day with papers and at today; a day with no papers shows its one line; an out-of-range or malformed day
+     answers 404;
    - the version rule: `…v1` then `…v2` is not new, a first-seen `…v3` is new;
    - a failed fetch, an empty response and arXiv's error entry are each saved as a failed run;
    - titles are saved with their whitespace collapsed;
