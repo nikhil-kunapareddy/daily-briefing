@@ -1,0 +1,349 @@
+/* Basic styling for the Daily Briefing page.
+   The spec (rules 18‑19) defines colours, fonts and responsive layout.
+   This stylesheet focuses on the required elements without external
+   dependencies – everything is pure CSS.
+*/
+
+:root {
+    /* Light theme (default) */
+    --bg: #fafafa;
+    --text: #111;
+    --accent: #0066cc;
+    --accent-hover: #0052a3;
+    --note-bg: #fff9c4;
+    --note-border: #fbc02d;
+    --note-text: #111;
+    --header-rule: #ddd;
+    --table-border: #ddd;
+    --table-header-bg: #f0f0f0;
+    --table-header-text: #555;
+    --doi-color: #666;
+    --ok-color: #2e7d32;
+    --fail-color: #c62828;
+    --footer-text: #555;
+    --card-border: #ddd;
+    --card-bg: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #121212;
+        --text: #eee;
+        --accent: #66b0ff;
+        --accent-hover: #8cc8ff;
+        --note-bg: #3d3600;
+        --note-border: #fbc02d;
+        --note-text: #fff;
+        --header-rule: #444;
+        --table-border: #444;
+        --table-header-bg: #1e1e1e;
+        --table-header-text: #aaa;
+        --doi-color: #aaa;
+        --ok-color: #81c784;
+        --fail-color: #e57373;
+        --footer-text: #aaa;
+        --card-border: #444;
+        --card-bg: #1e1e1e;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0 1rem;
+    font-family: system-ui, sans-serif;
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.5;
+    background: var(--bg);
+    color: var(--text);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+    gap: 1rem;
+}
+
+.header-left {
+    flex: 1;
+}
+
+.header h1 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1.5rem;
+}
+
+.subtitle {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--footer-text);
+}
+
+.run-now-form {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+    white-space: nowrap;
+}
+
+.run-now {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.4rem 0.8rem;
+    cursor: pointer;
+    font-weight: bold;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.run-now:hover {
+    background: var(--accent-hover);
+}
+
+.rate-limit-note {
+    margin: 0;
+    font-size: 0.7rem;
+    color: var(--footer-text);
+}
+
+.header-rule {
+    border: none;
+    border-top: 1px solid var(--header-rule);
+    margin: 0.5rem 0 1rem 0;
+}
+
+.note {
+    background: var(--note-bg);
+    border-left: 4px solid var(--note-border);
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    color: var(--note-text);
+    font-size: 0.9rem;
+}
+
+.note.wait {
+    /* same style – just different semantic class */
+}
+
+.note.no-new {
+    /* same style */
+}
+
+section.briefing {
+    margin-top: 1rem;
+}
+
+section.briefing h2 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1.1rem;
+}
+
+section.briefing p {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--footer-text);
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+}
+
+th, td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--table-border);
+    text-align: left;
+    font-size: 0.9rem;
+}
+
+th {
+    background: var(--table-header-bg);
+    color: var(--table-header-text);
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+}
+
+td {
+    vertical-align: top;
+}
+
+.doi {
+    font-family: monospace;
+    color: var(--doi-color);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+td strong {
+    font-weight: 600;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.history-table th,
+.history-table td {
+    text-align: center;
+}
+
+.history-table td:first-child,
+.history-table th:first-child {
+    text-align: left;
+}
+
+.ok .status {
+    color: var(--ok-color);
+}
+
+.fail .status {
+    color: var(--fail-color);
+}
+
+.status {
+    font-weight: bold;
+}
+
+footer {
+    margin: 2rem 0 1rem 0;
+    font-size: 0.8rem;
+    text-align: center;
+    color: var(--footer-text);
+}
+
+footer a {
+    color: var(--accent);
+}
+
+@media (max-width: 600px) {
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .run-now-form {
+        align-items: flex-start;
+        width: 100%;
+    }
+
+    .run-now {
+        width: 100%;
+        text-align: center;
+    }
+
+    .rate-limit-note {
+        text-align: center;
+        width: 100%;
+    }
+
+    table.papers thead {
+        display: none;
+    }
+
+    table.papers tbody tr {
+        display: block;
+        margin-bottom: 1rem;
+        padding: 0.75rem;
+        border: 1px solid var(--card-border);
+        border-radius: 6px;
+        background: var(--card-bg);
+    }
+
+    table.papers td {
+        display: block;
+        border: none;
+        padding: 0.25rem 0;
+        font-size: 0.9rem;
+    }
+
+    table.papers td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        display: inline-block;
+        width: 5.5rem;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--table-header-text);
+    }
+
+    table.papers td.doi {
+        display: inline-block;
+        margin-right: 1rem;
+    }
+
+    table.papers td.doi::before {
+        content: "DOI";
+    }
+
+    table.papers td:last-child {
+        display: inline-block;
+    }
+
+    table.papers td:last-child::before {
+        content: "PDF";
+    }
+
+    .history-table thead {
+        display: none;
+    }
+
+    .history-table tbody tr {
+        display: block;
+        margin-bottom: 0.5rem;
+        border: 1px solid var(--card-border);
+        border-radius: 6px;
+        padding: 0.5rem;
+        background: var(--card-bg);
+    }
+
+    .history-table td {
+        display: block;
+        text-align: left;
+        border: none;
+        padding: 0.25rem 0;
+        font-size: 0.85rem;
+    }
+
+    .history-table td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        display: inline-block;
+        width: 5.5rem;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--table-header-text);
+    }
+
+    .history-table td.status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .history-table td.status::before {
+        content: "STATUS";
+    }
+
+    .history-table td:last-child::before {
+        content: "RESULT";
+    }
+}
