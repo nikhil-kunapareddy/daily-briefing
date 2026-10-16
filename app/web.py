@@ -254,8 +254,20 @@ def create_app() -> Flask:
 
     @app.route("/healthz", methods=["GET"])
     def healthz():  # noqa: D401
-        """Simple health endpoint used by the spec (rule 17)."""
-        status = db.health()
+        """Simple health endpoint used by the spec (rule 17).
+
+        The underlying ``db.health`` may raise an exception (e.g. when the
+        SQLite file cannot be opened). The specification expects a ``503``
+        response with a JSON body containing an ``error`` key in that case.
+        We therefore protect the call with a ``try``/``except`` block and map
+        any exception to the appropriate error response.
+        """
+        try:
+            status = db.health()
+        except Exception as exc:  # pragma: no cover – exercised via test
+            # Convert unexpected errors into a service‑unavailable response.
+            return jsonify({"error": str(exc)}), 503
+
         if status is None:
             # No runs yet – treat as healthy but report empty data.
             return jsonify({}), 200
