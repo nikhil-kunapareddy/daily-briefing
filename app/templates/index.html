@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Daily Briefing</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <h1>Daily Briefing</h1>
+            <p class="subtitle">New papers in arXiv cs.MA (multi-agent systems), every day at 02:00 UTC</p>
+        </div>
+        <form method="post" action="{{ url_for('run_now') }}" class="run-now-form">
+            <button type="submit" class="run-now">Run now</button>
+            <p class="rate-limit-note">At most once every 10 minutes</p>
+        </form>
+    </header>
+
+    <hr class="header-rule" />
+
+    {% if run_now_wait is defined and run_now_wait %}
+    <div class="note wait">
+        Try again in {{ run_now_wait }} min
+    </div>
+    {% endif %}
+
+    {% if briefing %}
+        {% if no_new %}
+            <div class="note no-new">
+                No new submissions since the last run (checked {{ briefing.time_fmt }} UTC).
+            </div>
+            {% if last_with_papers %}
+            <section class="briefing prev-briefing">
+                <h2>{{ last_with_papers.date_fmt }}</h2>
+                <p>{{ last_with_papers.new_count }} new since the last run · Last checked {{ last_with_papers.time_fmt }} UTC</p>
+                <table class="papers">
+                    <thead>
+                        <tr><th>S.NO</th><th>TITLE</th><th>DOI</th><th>PDF</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for p in last_with_papers.papers %}
+                        <tr>
+                            <td data-label="S.NO">{{ loop.index }}</td>
+                            <td data-label="TITLE"><strong>{{ p.title }}</strong></td>
+                            <td data-label="DOI" class="doi">10.48550/arXiv.{{ p.stable_id }}</td>
+                            <td data-label="PDF"><a href="{{ p.pdf_link }}" target="_blank">PDF</a></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+            {% endif %}
+        {% else %}
+            <section class="briefing">
+                <h2>{{ briefing.date_fmt }}</h2>
+                {% if briefing.is_first_run %}
+                    <p>First run: everything is new</p>
+                {% else %}
+                    <p>{{ briefing.new_count }} new since the last run · Last checked {{ briefing.time_fmt }} UTC</p>
+                {% endif %}
+                <table class="papers">
+                    <thead>
+                        <tr><th>S.NO</th><th>TITLE</th><th>DOI</th><th>PDF</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for p in briefing.papers %}
+                        <tr>
+                            <td data-label="S.NO">{{ loop.index }}</td>
+                            <td data-label="TITLE"><strong>{{ p.title }}</strong></td>
+                            <td data-label="DOI" class="doi">10.48550/arXiv.{{ p.stable_id }}</td>
+                            <td data-label="PDF"><a href="{{ p.pdf_link }}" target="_blank">PDF</a></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </section>
+        {% endif %}
+    {% else %}
+        <p>No data available yet.</p>
+    {% endif %}
+
+    <section class="history">
+        <h2>Run history</h2>
+        <p class="utc-note">All times UTC.</p>
+        <table class="history-table">
+            <thead>
+                <tr><th>TIME</th><th>✓/✗</th><th>TRIGGER</th><th>RESULT</th></tr>
+            </thead>
+            <tbody>
+                {% for r in runs %}
+                <tr class="{{ 'ok' if r.ok else 'fail' }}">
+                    <td data-label="TIME">{{ r.time }}</td>
+                    <td data-label="✓/✗" class="status">{{ '✓' if r.ok else '✗' }}{% if r.error_short %} {{ r.error_short }}{% endif %}</td>
+                    <td data-label="TRIGGER">{{ r.trigger }}</td>
+                    <td data-label="RESULT">{{ r.new_count if r.new_count else 'no new submissions' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <footer>
+        Thank you to arXiv for use of its open access interoperability. &middot;
+        Source: the arXiv API &middot;
+        <a href="{{ url_for('healthz') }}">/healthz</a>
+    </footer>
+</body>
+</html>
