@@ -171,8 +171,41 @@ def create_app() -> Flask:
         wait_minutes = int(result)
         # Render the index page with a note about the rate‑limit.
         latest = db.latest_briefing()
-        no_new = latest["new_count"] == 0 if latest else False
-        last_with_papers = db.last_briefing_with_papers() if no_new else None
+        if latest is None:
+            # No runs yet – render an empty page.
+            return render_template(
+                "index.html",
+                briefing=None,
+                no_new=False,
+                last_with_papers=None,
+                runs=[],
+                run_now_wait=wait_minutes,
+                latest_run_time=None,
+            )
+
+        # Determine if we need the *no new* placeholder.
+        no_new = latest["new_count"] == 0
+        last_with_papers: Optional[Dict[str, Any]] = None
+        if no_new:
+            last_with_papers = db.last_briefing_with_papers()
+
+        # Prepare a copy of latest with formatted date/time strings.
+        briefing_ctx = dict(latest)
+        briefing_ctx["date_fmt"] = _format_date(latest["date"])
+        briefing_ctx["time_fmt"] = _format_time(latest["date"])
+        briefing_ctx["datetime_fmt"] = _format_datetime(latest["date"])
+        briefing_ctx["is_first_run"] = latest.get("is_first_run", False)
+
+        # Prepare last_with_papers similarly, if present.
+        if last_with_papers:
+            last_ctx = dict(last_with_papers)
+            last_ctx["date_fmt"] = _format_date(last_with_papers["date"])
+            last_ctx["time_fmt"] = _format_time(last_with_papers["date"])
+            last_ctx["datetime_fmt"] = _format_datetime(last_with_papers["date"])
+        else:
+            last_ctx = None
+
+        # History (newest 10 runs) – format timestamps.
         raw_runs = db.latest_runs(limit=10)
         runs: List[Dict[str, Any]] = []
         for r in raw_runs:
@@ -187,12 +220,14 @@ def create_app() -> Flask:
                     "error_short": r["error_short"],
                 }
             )
-        latest_run_time = _format_time(latest["date"]) if latest else None
+
+        latest_run_time = _format_time(latest["date"])
+
         return render_template(
             "index.html",
-            briefing=latest,
+            briefing=briefing_ctx,
             no_new=no_new,
-            last_with_papers=last_with_papers,
+            last_with_papers=last_ctx,
             runs=runs,
             run_now_wait=wait_minutes,
             latest_run_time=latest_run_time,
