@@ -215,6 +215,22 @@ def test_paper_title_bold():
     assert b"<strong>Test Paper</strong>" in resp.data
 
 
+def test_failed_run_shown_in_history():
+    """Ensure a failed run appears in the history table with a cross and the error message."""
+    client = app.test_client()
+    # Use cron trigger to avoid manual rate‑limit.
+    fail_id = db.start_run("cron")
+    db.finish_run(fail_id, error="boom")
+
+    resp = client.get("/")
+    assert resp.status_code == 200
+    resp_text = resp.data.decode("utf-8")
+    # The history table should contain the failure symbol.
+    assert "✗" in resp_text
+    # The short error (first line) should be rendered next to the symbol.
+    assert "boom" in resp_text
+
+
 def test_doi_format():
     client = app.test_client()
     run_id = db.start_manual_run()

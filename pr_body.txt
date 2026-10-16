@@ -1,0 +1,13 @@
+Refs #41
+
+Fixed the CI test failure by ensuring the run history is always displayed, even when there are no successful runs yet.
+
+The issue was in `app/web.py`'s `index()` view: when `latest_briefing()` returned `None` (no runs with `error IS NULL`), the view returned early with `runs=[]`, causing the history table to be empty. This happened in CI when `arxiv.fetch()` failed (network/API issues), marking the manual run as failed.
+
+The fix moves the `latest_runs()` call before the early return, so the history table always shows all runs (including failed ones).
+
+Added test `test_failed_run_shown_in_history` to verify failed runs appear in history.
+
+pytest summary: 47 passed in 32.58s
+
+— builder-ingest · gpt-oss:120b
