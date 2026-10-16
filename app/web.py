@@ -82,31 +82,66 @@ def create_app() -> Flask:
         shows today's papers. Uses ``db.papers_for_day`` and ``db.oldest_paper_day``
         to fetch papers and determine navigation boundaries.
         """
-        # Parse day parameter or default to today (UTC)
+        # Determine which day to display.
         day_str = request.args.get("day")
         try:
-            if day_str:
-                selected_day = _parse_day_param(day_str)
-            else:
-                selected_day = _today_utc()
+            day_param = _parse_day_param(day_str) if day_str else None
         except ValueError:
             abort(404, description="Invalid date format. Use YYYY-MM-DD.")
 
         today = _today_utc()
-
-        # Boundary checks: day cannot be in the future (after today) or before oldest paper day
         oldest_day = db.oldest_paper_day()
-        if selected_day > today:
-            abort(404, description="Cannot view future days.")
-        if oldest_day and selected_day < oldest_day:
-            abort(404, description="No papers before this date.")
-
-        # Get papers for the selected day
-        papers = db.papers_for_day(selected_day)
-
-        # Get the latest successful run for "Last checked" display
         latest_run = db.latest_briefing()
         latest_run_time = _format_time(latest_run["date"]) if latest_run else None
+
+        if latest_run is None:
+            # No runs at all.
+            selected_day = today
+            papers = []
+            briefing_msg = "No data available yet"
+        else:
+            # There is at least one successful run.
+            if day_param is None:
+                # No explicit day – show the latest successful run's papers.
+                # Use the run's start date for the header, but keep the papers from the run.
+                selected_day = datetime.fromisoformat(latest_run["date"]).date()
+                papers = latest_run["papers"]
+                # If the run recorded zero new papers, show the appropriate message.
+                if latest_run.get("new_count", 0) == 0:
+                    briefing_msg = "No new submissions since the last run"
+                    # Ensure we still show the previous briefing's papers (the latest run
+                    # with papers). ``latest_briefing`` already returns the most recent
+                    # successful run, but its papers list may be empty when new_count=0.
+                    # Fall back to the last run that actually had papers.
+                    last_with_papers = db.last_briefing_with_papers()
+                    if last_with_papers:
+                        papers = last_with_papers["papers"]
+                elif latest_run.get("is_first_run"):
+                    briefing_msg = "First run: everything is new"
+                else:
+                    briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
+            else:
+                # Explicit day parameter – enforce bounds.
+                if day_param > today:
+                    abort(404, description="Cannot view future days.")
+                if oldest_day and day_param < oldest_day:
+                    abort(404, description="No papers before this date.")
+                selected_day = day_param
+                papers = db.papers_for_day(selected_day)
+                if not papers:
+                    # Fallback to latest run's day if different.
+                    fallback = datetime.fromisoformat(latest_run["date"]).date()
+                    if fallback != selected_day:
+                        selected_day = fallback
+                        papers = db.papers_for_day(selected_day)
+                # Determine briefing message based on the final paper list.
+                if papers:
+                    briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
+                else:
+                    if selected_day == today:
+                        briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
+                    else:
+                        briefing_msg = f"No new papers from {_format_day(selected_day)}."
 
         # Determine if this is the oldest day with papers (for greying out left arrow)
         is_oldest_day = oldest_day is not None and selected_day == oldest_day
@@ -151,18 +186,8 @@ def create_app() -> Flask:
                 }
             )
 
-        # Build the "N new papers from this day" message
-        new_count = len(papers)
+        # Ensure ``day_label`` is available for the template.
         day_label = _format_day(selected_day)
-
-        if papers:
-            briefing_msg = f"{new_count} new paper{'s' if new_count != 1 else ''} from this day"
-        else:
-            # No papers for this day - friendly message per rule 11
-            if selected_day == today:
-                briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
-            else:
-                briefing_msg = f"No new papers from {day_label}."
 
         return render_template(
             "index.html",
@@ -200,10 +225,10 @@ def create_app() -> Flask:
         is_new_run = False
         if row:
             # Compare the timestamp with now; if within a short window we treat it as the run we just created.
-            from datetime import datetime, timezone
+            from datetime import datetime as dt_dt, timezone as dt_tz
 
-            run_time = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
+            run_time = dt_dt.fromisoformat(row[0]).replace(tzinfo=dt_tz.utc)
+            now = dt_dt.now(dt_tz.utc)
             # If the run was started within the last 30 seconds, consider it the freshly created manual run.
             if abs((now - run_time).total_seconds()) < 30:
                 is_new_run = True
@@ -220,27 +245,60 @@ def create_app() -> Flask:
 
         # ``result`` is the minutes to wait (rate‑limited case).
         wait_minutes = int(result)
-        # Render the index page with a note about the rate‑limit.
-        # Need to rebuild the page context similar to index().
+        # Re‑use the normal index logic to build the page context, then add the wait note.
+        # We do this by performing a GET request to the index view internally and
+        # extracting the template context, but a simpler approach is to duplicate the
+        # essential logic while ensuring the fallback to the latest run works.
+        # Build the same context as ``index`` does (without the wait note).
         day_str = request.args.get("day")
         try:
-            if day_str:
-                selected_day = _parse_day_param(day_str)
-            else:
-                selected_day = _today_utc()
+            day_param = _parse_day_param(day_str) if day_str else None
         except ValueError:
-            selected_day = _today_utc()
+            day_param = _today_utc()
 
         today = _today_utc()
         oldest_day = db.oldest_paper_day()
-        if selected_day > today:
-            selected_day = today
-        if oldest_day and selected_day < oldest_day:
-            selected_day = oldest_day
-
-        papers = db.papers_for_day(selected_day)
         latest_run = db.latest_briefing()
         latest_run_time = _format_time(latest_run["date"]) if latest_run else None
+
+        if latest_run is None:
+            selected_day = today
+            papers = []
+            briefing_msg = "No data available yet"
+        else:
+            if day_param is None:
+                selected_day = datetime.fromisoformat(latest_run["date"]).date()
+                papers = latest_run["papers"]
+                if latest_run.get("new_count", 0) == 0:
+                    briefing_msg = "No new submissions since the last run"
+                    last_with_papers = db.last_briefing_with_papers()
+                    if last_with_papers:
+                        papers = last_with_papers["papers"]
+                elif latest_run.get("is_first_run"):
+                    briefing_msg = "First run: everything is new"
+                else:
+                    briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
+            else:
+                # Explicit day – enforce bounds.
+                if day_param > today:
+                    day_param = today
+                if oldest_day and day_param < oldest_day:
+                    day_param = oldest_day
+                selected_day = day_param
+                papers = db.papers_for_day(selected_day)
+                if not papers:
+                    fallback = datetime.fromisoformat(latest_run["date"]).date()
+                    if fallback != selected_day:
+                        selected_day = fallback
+                        papers = db.papers_for_day(selected_day)
+                if papers:
+                    briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
+                else:
+                    if selected_day == today:
+                        briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
+                    else:
+                        briefing_msg = f"No new papers from {_format_day(selected_day)}."
+
         is_oldest_day = oldest_day is not None and selected_day == oldest_day
         is_today = selected_day == today
         prev_day = selected_day - timedelta(days=1)
@@ -248,14 +306,6 @@ def create_app() -> Flask:
         prev_day_valid = oldest_day is None or prev_day >= oldest_day
         next_day_valid = next_day <= today
         day_label = _format_day(selected_day)
-        new_count = len(papers)
-        if papers:
-            briefing_msg = f"{new_count} new paper{'s' if new_count != 1 else ''} from this day"
-        else:
-            if selected_day == today:
-                briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
-            else:
-                briefing_msg = f"No new papers from {day_label}."
 
         raw_runs = db.latest_runs(limit=10)
         runs: List[Dict[str, Any]] = []
