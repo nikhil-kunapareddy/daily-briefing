@@ -181,8 +181,21 @@ def create_app() -> Flask:
 
     @app.route("/healthz", methods=["GET"]) 
     def healthz():  # noqa: D401
-        """Simple health endpoint used by the spec (rule 17)."""
-        status = db.health()
+        """Simple health endpoint used by the spec (rule 17).
+
+        The original implementation assumed ``db.health()`` never raised.
+        In practice, mis‑configuration (e.g., missing ``DAILY_BRIEFING_DATA``
+        or a corrupted SQLite file) can cause an exception, bubbling up as a
+        500 error which the external gateway reports as *502 Bad Gateway*.
+        To make the endpoint robust we now guard the call and always return a
+        JSON payload with an appropriate HTTP status code.
+        """
+        try:
+            status = db.health()
+        except Exception:  # pragma: no cover – defensive fallback
+            # If the health check itself fails, report service error.
+            return jsonify({"status": "error", "error": "health check failed"}), 503
+
         if status is None:
             # No runs yet – treat as healthy but report empty data.
             return jsonify({}), 200
