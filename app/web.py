@@ -18,10 +18,11 @@ can verify the layout.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import sqlite3
+from datetime import datetime, date, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, url_for, abort
 
 from . import db, job
 
@@ -44,6 +45,21 @@ def _format_datetime(iso: str) -> str:
     return dt.strftime("%a %d %b %Y, %H:%M UTC")
 
 
+def _format_day(d: date) -> str:
+    """Return a date string like 'Wed 14 Oct 2026' from a date object."""
+    return d.strftime("%a %d %b %Y")
+
+
+def _today_utc() -> date:
+    """Return today's date in UTC."""
+    return datetime.now(timezone.utc).date()
+
+
+def _parse_day_param(day_str: str) -> date:
+    """Parse YYYY-MM-DD string to date, raise ValueError if invalid."""
+    return date.fromisoformat(day_str)
+
+
 def create_app() -> Flask:
     """Factory that creates and configures the Flask application.
 
@@ -56,55 +72,72 @@ def create_app() -> Flask:
     app.jinja_env.globals["_format_date"] = _format_date
     app.jinja_env.globals["_format_time"] = _format_time
     app.jinja_env.globals["_format_datetime"] = _format_datetime
+    app.jinja_env.globals["_format_day"] = _format_day
 
     @app.route("/", methods=["GET"])
     def index():  # noqa: D401 – simple view function
-        """Render the public briefing page.
+        """Render the public briefing page for a specific UTC day.
 
-        The view gathers the latest successful briefing, the most recent
-        briefing that actually has papers (for the *no new* case) and the
-        recent run history.  Dates are formatted as the spec expects so the
-        template can stay simple.
+        The view handles the ``day`` query parameter (YYYY-MM-DD). If absent,
+        shows today's papers. Uses ``db.papers_for_day`` and ``db.oldest_paper_day``
+        to fetch papers and determine navigation boundaries.
         """
-        latest = db.latest_briefing()
-        if latest is None:
-            # No runs yet – render an empty page.
-            return render_template(
-                "index.html",
-                briefing=None,
-                no_new=False,
-                last_with_papers=None,
-                runs=[],
-                run_now_wait=None,
-                latest_run_time=None,
-            )
+        # Parse day parameter or default to today (UTC)
+        day_str = request.args.get("day")
+        try:
+            if day_str:
+                selected_day = _parse_day_param(day_str)
+            else:
+                selected_day = _today_utc()
+        except ValueError:
+            abort(404, description="Invalid date format. Use YYYY-MM-DD.")
 
-        # Determine if we need the *no new* placeholder.
-        no_new = latest["new_count"] == 0
-        last_with_papers: Optional[Dict[str, Any]] = None
-        if no_new:
-            last_with_papers = db.last_briefing_with_papers()
+        today = _today_utc()
 
-        # Prepare a copy of latest with formatted date/time strings.
-        briefing_ctx = dict(latest)
-        briefing_ctx["date_fmt"] = _format_date(latest["date"])
-        briefing_ctx["time_fmt"] = _format_time(latest["date"])
-        briefing_ctx["datetime_fmt"] = _format_datetime(latest["date"])
-        briefing_ctx["is_first_run"] = latest.get("is_first_run", False)
+        # Boundary checks: day cannot be in the future (after today) or before oldest paper day
+        oldest_day = db.oldest_paper_day()
+        if selected_day > today:
+            abort(404, description="Cannot view future days.")
+        if oldest_day and selected_day < oldest_day:
+            abort(404, description="No papers before this date.")
 
-        # Prepare last_with_papers similarly, if present.
-        if last_with_papers:
-            last_ctx = dict(last_with_papers)
-            last_ctx["date_fmt"] = _format_date(last_with_papers["date"])
-            last_ctx["time_fmt"] = _format_time(last_with_papers["date"])
-            last_ctx["datetime_fmt"] = _format_datetime(last_with_papers["date"])
-        else:
-            last_ctx = None
+        # Get papers for the selected day
+        papers = db.papers_for_day(selected_day)
+
+        # Get the latest successful run for "Last checked" display
+        latest_run = db.latest_briefing()
+        latest_run_time = _format_time(latest_run["date"]) if latest_run else None
+
+        # Determine if this is the oldest day with papers (for greying out left arrow)
+        is_oldest_day = oldest_day is not None and selected_day == oldest_day
+
+        # Determine if this is today (for greying out right arrow)
+        is_today = selected_day == today
+
+        # Previous and next day for navigation links
+        prev_day = selected_day - timedelta(days=1)
+        next_day = selected_day + timedelta(days=1)
+
+        # Check if previous day is valid (not before oldest_day)
+        prev_day_valid = oldest_day is None or prev_day >= oldest_day
+
+        # Check if next day is valid (not after today)
+        next_day_valid = next_day <= today
 
         # History (newest 10 runs) – format timestamps.
+        # Also determine which run is the first successful run for "First run: everything is new" display.
+        conn = db._get_connection()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM runs WHERE error IS NULL")
+        total_successful = cur.fetchone()[0]
+        
         raw_runs = db.latest_runs(limit=10)
         runs: List[Dict[str, Any]] = []
+        successful_count = 0
         for r in raw_runs:
+            successful_count += 1 if r["ok"] else 0
+            is_first_successful = (total_successful == 1 and r["ok"])
             runs.append(
                 {
                     "time": _format_time(r["time"]),
@@ -114,20 +147,38 @@ def create_app() -> Flask:
                     "trigger": r["trigger"],
                     "new_count": r["new_count"],
                     "error_short": r["error_short"],
+                    "is_first_run": is_first_successful,
                 }
             )
 
-        # Get the latest run time for the "Last checked" display
-        latest_run_time = _format_time(latest["date"])
+        # Build the "N new papers from this day" message
+        new_count = len(papers)
+        day_label = _format_day(selected_day)
+
+        if papers:
+            briefing_msg = f"{new_count} new paper{'s' if new_count != 1 else ''} from this day"
+        else:
+            # No papers for this day - friendly message per rule 11
+            if selected_day == today:
+                briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
+            else:
+                briefing_msg = f"No new papers from {day_label}."
 
         return render_template(
             "index.html",
-            briefing=briefing_ctx,
-            no_new=no_new,
-            last_with_papers=last_ctx,
+            selected_day=selected_day,
+            day_label=day_label,
+            papers=papers,
+            briefing_msg=briefing_msg,
+            latest_run_time=latest_run_time,
+            is_oldest_day=is_oldest_day,
+            is_today=is_today,
+            prev_day=prev_day,
+            next_day=next_day,
+            prev_day_valid=prev_day_valid,
+            next_day_valid=next_day_valid,
             runs=runs,
             run_now_wait=None,
-            latest_run_time=latest_run_time,
         )
 
     @app.route("/run-now", methods=["POST"])
@@ -170,45 +221,51 @@ def create_app() -> Flask:
         # ``result`` is the minutes to wait (rate‑limited case).
         wait_minutes = int(result)
         # Render the index page with a note about the rate‑limit.
-        latest = db.latest_briefing()
-        if latest is None:
-            # No runs yet – render an empty page.
-            return render_template(
-                "index.html",
-                briefing=None,
-                no_new=False,
-                last_with_papers=None,
-                runs=[],
-                run_now_wait=wait_minutes,
-                latest_run_time=None,
-            )
+        # Need to rebuild the page context similar to index().
+        day_str = request.args.get("day")
+        try:
+            if day_str:
+                selected_day = _parse_day_param(day_str)
+            else:
+                selected_day = _today_utc()
+        except ValueError:
+            selected_day = _today_utc()
 
-        # Determine if we need the *no new* placeholder.
-        no_new = latest["new_count"] == 0
-        last_with_papers: Optional[Dict[str, Any]] = None
-        if no_new:
-            last_with_papers = db.last_briefing_with_papers()
+        today = _today_utc()
+        oldest_day = db.oldest_paper_day()
+        if selected_day > today:
+            selected_day = today
+        if oldest_day and selected_day < oldest_day:
+            selected_day = oldest_day
 
-        # Prepare a copy of latest with formatted date/time strings.
-        briefing_ctx = dict(latest)
-        briefing_ctx["date_fmt"] = _format_date(latest["date"])
-        briefing_ctx["time_fmt"] = _format_time(latest["date"])
-        briefing_ctx["datetime_fmt"] = _format_datetime(latest["date"])
-        briefing_ctx["is_first_run"] = latest.get("is_first_run", False)
-
-        # Prepare last_with_papers similarly, if present.
-        if last_with_papers:
-            last_ctx = dict(last_with_papers)
-            last_ctx["date_fmt"] = _format_date(last_with_papers["date"])
-            last_ctx["time_fmt"] = _format_time(last_with_papers["date"])
-            last_ctx["datetime_fmt"] = _format_datetime(last_with_papers["date"])
+        papers = db.papers_for_day(selected_day)
+        latest_run = db.latest_briefing()
+        latest_run_time = _format_time(latest_run["date"]) if latest_run else None
+        is_oldest_day = oldest_day is not None and selected_day == oldest_day
+        is_today = selected_day == today
+        prev_day = selected_day - timedelta(days=1)
+        next_day = selected_day + timedelta(days=1)
+        prev_day_valid = oldest_day is None or prev_day >= oldest_day
+        next_day_valid = next_day <= today
+        day_label = _format_day(selected_day)
+        new_count = len(papers)
+        if papers:
+            briefing_msg = f"{new_count} new paper{'s' if new_count != 1 else ''} from this day"
         else:
-            last_ctx = None
+            if selected_day == today:
+                briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
+            else:
+                briefing_msg = f"No new papers from {day_label}."
 
-        # History (newest 10 runs) – format timestamps.
         raw_runs = db.latest_runs(limit=10)
         runs: List[Dict[str, Any]] = []
+        conn = db._get_connection()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM runs WHERE error IS NULL")
+        total_successful = cur.fetchone()[0]
         for r in raw_runs:
+            is_first_successful = (total_successful == 1 and r["ok"])
             runs.append(
                 {
                     "time": _format_time(r["time"]),
@@ -218,19 +275,25 @@ def create_app() -> Flask:
                     "trigger": r["trigger"],
                     "new_count": r["new_count"],
                     "error_short": r["error_short"],
+                    "is_first_run": is_first_successful,
                 }
             )
 
-        latest_run_time = _format_time(latest["date"])
-
         return render_template(
             "index.html",
-            briefing=briefing_ctx,
-            no_new=no_new,
-            last_with_papers=last_ctx,
+            selected_day=selected_day,
+            day_label=day_label,
+            papers=papers,
+            briefing_msg=briefing_msg,
+            latest_run_time=latest_run_time,
+            is_oldest_day=is_oldest_day,
+            is_today=is_today,
+            prev_day=prev_day,
+            next_day=next_day,
+            prev_day_valid=prev_day_valid,
+            next_day_valid=next_day_valid,
             runs=runs,
             run_now_wait=wait_minutes,
-            latest_run_time=latest_run_time,
         )
 
     @app.route("/healthz", methods=["GET"])

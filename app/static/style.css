@@ -23,6 +23,8 @@
     --footer-text: #555;
     --card-border: #ddd;
     --card-bg: #fff;
+    --arrow-disabled: #ccc;
+    --day-label: #111;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -44,6 +46,8 @@
         --footer-text: #aaa;
         --card-border: #444;
         --card-bg: #1e1e1e;
+        --arrow-disabled: #666;
+        --day-label: #eee;
     }
 }
 
@@ -143,15 +147,46 @@ section.briefing {
     margin-top: 1rem;
 }
 
-section.briefing h2 {
-    margin: 0 0 0.25rem 0;
-    font-size: 1.1rem;
+.day-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
 }
 
-section.briefing p {
-    margin: 0 0 0.5rem 0;
+.day-arrow {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 1.2rem;
+    font-weight: bold;
+    padding: 0.25rem 0.5rem;
+    transition: color 0.2s;
+}
+
+.day-arrow:hover {
+    color: var(--accent-hover);
+    text-decoration: none;
+}
+
+.day-arrow.disabled {
+    color: var(--arrow-disabled);
+    cursor: default;
+    pointer-events: none;
+}
+
+.day-label {
+    font-weight: bold;
+    font-size: 1.1rem;
+    color: var(--day-label);
+    white-space: nowrap;
+}
+
+.briefing-meta {
+    margin: 0.5rem 0;
     font-size: 0.9rem;
     color: var(--footer-text);
+    text-align: center;
 }
 
 table {

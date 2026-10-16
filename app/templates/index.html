@@ -25,60 +25,44 @@
     </div>
     {% endif %}
 
-    {% if briefing %}
-        {% if no_new %}
-            <div class="note no-new">
-                No new submissions since the last run (checked {{ briefing.time_fmt }} UTC).
-            </div>
-            {% if last_with_papers %}
-            <section class="briefing prev-briefing">
-                <h2>{{ last_with_papers.date_fmt }}</h2>
-                <p>{{ last_with_papers.new_count }} new since the last run · Last checked {{ last_with_papers.time_fmt }} UTC</p>
-                <table class="papers">
-                    <thead>
-                        <tr><th>S.NO</th><th>TITLE</th><th>DOI</th><th>PDF</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for p in last_with_papers.papers %}
-                        <tr>
-                            <td data-label="S.NO">{{ loop.index }}</td>
-                            <td data-label="TITLE"><strong>{{ p.title }}</strong></td>
-                            <td data-label="DOI" class="doi">10.48550/arXiv.{{ p.stable_id }}</td>
-                            <td data-label="PDF"><a href="{{ p.pdf_link }}" target="_blank">PDF</a></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </section>
+    <section class="briefing">
+        <div class="day-nav">
+            {% if prev_day_valid %}
+                <a href="{{ url_for('index', day=prev_day.isoformat()) }}" class="day-arrow">←</a>
+            {% else %}
+                <span class="day-arrow disabled">←</span>
             {% endif %}
+            <span class="day-label">{{ day_label }}</span>
+            {% if next_day_valid %}
+                <a href="{{ url_for('index', day=next_day.isoformat()) }}" class="day-arrow">→</a>
+            {% else %}
+                <span class="day-arrow disabled">→</span>
+            {% endif %}
+        </div>
+        <p class="briefing-meta">{{ briefing_msg }}{% if latest_run_time %} · Last checked {{ latest_run_time }} UTC{% endif %}</p>
+        
+        {% if papers %}
+        <table class="papers">
+            <thead>
+                <tr><th>S.NO</th><th>TITLE</th><th>DOI</th><th>PDF</th></tr>
+            </thead>
+            <tbody>
+                {% for p in papers %}
+                <tr>
+                    <td data-label="S.NO">{{ loop.index }}</td>
+                    <td data-label="TITLE"><strong>{{ p.title }}</strong></td>
+                    <td data-label="DOI" class="doi">10.48550/arXiv.{{ p.stable_id }}</td>
+                    <td data-label="PDF"><a href="{{ p.pdf_link }}" target="_blank">PDF</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
         {% else %}
-            <section class="briefing">
-                <h2>{{ briefing.date_fmt }}</h2>
-                {% if briefing.is_first_run %}
-                    <p>First run: everything is new</p>
-                {% else %}
-                    <p>{{ briefing.new_count }} new since the last run · Last checked {{ briefing.time_fmt }} UTC</p>
-                {% endif %}
-                <table class="papers">
-                    <thead>
-                        <tr><th>S.NO</th><th>TITLE</th><th>DOI</th><th>PDF</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for p in briefing.papers %}
-                        <tr>
-                            <td data-label="S.NO">{{ loop.index }}</td>
-                            <td data-label="TITLE"><strong>{{ p.title }}</strong></td>
-                            <td data-label="DOI" class="doi">10.48550/arXiv.{{ p.stable_id }}</td>
-                            <td data-label="PDF"><a href="{{ p.pdf_link }}" target="_blank">PDF</a></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </section>
+        <div class="note no-new">
+            {{ briefing_msg }}
+        </div>
         {% endif %}
-    {% else %}
-        <p>No data available yet.</p>
-    {% endif %}
+    </section>
 
     <section class="history">
         <h2>Run history</h2>
@@ -93,7 +77,7 @@
                     <td data-label="TIME">{{ r.time }}</td>
                     <td data-label="✓/✗" class="status">{{ '✓' if r.ok else '✗' }}{% if r.error_short %} {{ r.error_short }}{% endif %}</td>
                     <td data-label="TRIGGER">{{ r.trigger }}</td>
-                    <td data-label="RESULT">{{ r.new_count if r.new_count else 'no new submissions' }}</td>
+                    <td data-label="RESULT">{% if r.is_first_run %}First run: everything is new{% elif r.new_count %}{{ r.new_count }}{% else %}no new submissions{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
