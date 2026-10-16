@@ -20,5 +20,6 @@ DATA_ROOT = Path(DAILY_BRIEFING_DATA)
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 
 # User‑Agent string identifying the application and linking back to the repo.
-USER_AGENT = "daily‑briefing/1.0 (+https://github.com/nikhil-kunapareddy/daily-briefing)"
+# Use plain ASCII hyphen in the User-Agent to avoid UnicodeEncodeError in HTTP headers.
+USER_AGENT = "daily-briefing/1.0 (+https://github.com/nikhil-kunapareddy/daily-briefing)"
 
