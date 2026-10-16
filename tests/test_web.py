@@ -34,6 +34,60 @@ def isolation(tmp_path, monkeypatch):
     yield
     # No explicit cleanup needed; the temporary directory will be removed.
 
+# ---------------------------------------------------------------------------
+# Global fixture to ensure no test makes a real network call to the arXiv API.
+# This aligns with the accepted lesson: "All tests that trigger the job must
+# explicitly mock or monkeypatch the network-facing fetch function."
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def mock_arxiv_fetch(monkeypatch):
+    """Monkey‑patch ``app.arxiv.fetch`` to return the static fixture data.
+
+    The project's ``fixtures/arxiv_sample.xml`` contains a small, deterministic
+    set of papers. All tests that invoke the web endpoint indirectly call
+    ``app.arxiv.fetch``; by patching it globally we guarantee they use the
+    fixture instead of performing a live HTTP request.
+    """
+    import app.arxiv as arxiv_module
+    from pathlib import Path
+    import xml.etree.ElementTree as ET
+
+    fixture_path = Path(__file__).parents[1] / "fixtures" / "arxiv_sample.xml"
+    xml_content = fixture_path.read_text(encoding="utf-8")
+    root = ET.fromstring(xml_content)
+    entries = root.findall('{http://www.w3.org/2005/Atom}entry')
+    fixture_papers = []
+    for entry in entries:
+        raw_id = entry.findtext('{http://www.w3.org/2005/Atom}id') or ''
+        if 'v' not in raw_id:
+            continue
+        stable_part, version = raw_id.rsplit('v', 1)
+        stable_id = stable_part.split('/')[-1]
+        version = f'v{version}'
+        raw_title = entry.findtext('{http://www.w3.org/2005/Atom}title') or ''
+        title = ' '.join(raw_title.split())
+        pdf_link = ''
+        for link in entry.findall('{http://www.w3.org/2005/Atom}link'):
+            if link.attrib.get('title') == 'pdf':
+                pdf_link = link.attrib.get('href', '')
+                break
+        published = entry.findtext('{http://www.w3.org/2005/Atom}published') or ''
+        updated = entry.findtext('{http://www.w3.org/2005/Atom}updated') or ''
+        fixture_papers.append({
+            'stable_id': stable_id,
+            'version': version,
+            'title': title,
+            'pdf_link': pdf_link,
+            'published': published,
+            'updated': updated,
+        })
+
+    def _mock_fetch():
+        return fixture_papers
+
+    monkeypatch.setattr(arxiv_module, 'fetch', _mock_fetch)
+
 
 def test_index_shows_no_data_initially():
     client = app.test_client()
@@ -94,7 +148,50 @@ def test_index_shows_no_new_with_previous_briefing():
     assert b"Test Paper One" in resp.data
 
 
-def test_run_now_creates_run_and_rate_limits():
+def test_run_now_creates_run_and_rate_limits(monkeypatch):
+    # Ensure the test uses the local fixture and never calls the live arXiv API.
+    # Monkeypatch arxiv.fetch to return the fixture data directly.
+    import app.arxiv as arxiv_module
+    from pathlib import Path
+    import xml.etree.ElementTree as ET
+
+    fixture_path = Path(__file__).parents[1] / "fixtures" / "arxiv_sample.xml"
+    xml_content = fixture_path.read_text(encoding="utf-8")
+    root = ET.fromstring(xml_content)
+    entries = root.findall("{http://www.w3.org/2005/Atom}entry")
+    fixture_papers = []
+    for entry in entries:
+        raw_id = entry.findtext("{http://www.w3.org/2005/Atom}id") or ""
+        if "v" not in raw_id:
+            continue
+        stable_part, version = raw_id.rsplit("v", 1)
+        stable_id = stable_part.split("/")[-1]
+        version = f"v{version}"
+        raw_title = entry.findtext("{http://www.w3.org/2005/Atom}title") or ""
+        title = " ".join(raw_title.split())
+        pdf_link = ""
+        for link in entry.findall("{http://www.w3.org/2005/Atom}link"):
+            if link.attrib.get("title") == "pdf":
+                pdf_link = link.attrib.get("href", "")
+                break
+        published = entry.findtext("{http://www.w3.org/2005/Atom}published") or ""
+        updated = entry.findtext("{http://www.w3.org/2005/Atom}updated") or ""
+        fixture_papers.append(
+            {
+                "stable_id": stable_id,
+                "version": version,
+                "title": title,
+                "pdf_link": pdf_link,
+                "published": published,
+                "updated": updated,
+            }
+        )
+
+    def mock_fetch():
+        return fixture_papers
+
+    monkeypatch.setattr(arxiv_module, "fetch", mock_fetch)
+
     client = app.test_client()
     # First POST should create a run and redirect back to index.
     resp1 = client.post("/run-now", follow_redirects=False)
