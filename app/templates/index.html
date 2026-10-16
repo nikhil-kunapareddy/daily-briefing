@@ -39,9 +39,9 @@
                 <span class="day-arrow disabled">→</span>
             {% endif %}
         </div>
+        {% if papers %}
         <p class="briefing-meta">{{ briefing_msg }}{% if latest_run_time %} · Last checked {{ latest_run_time }} UTC{% endif %}</p>
         
-        {% if papers %}
         <table class="papers">
             <thead>
                 <tr><th>S.NO</th><th>TITLE</th><th>DOI</th><th>PDF</th></tr>
@@ -61,6 +61,9 @@
         <div class="note no-new">
             {{ briefing_msg }}
         </div>
+        {% if latest_run_time %}
+        <p class="briefing-meta">Last checked {{ latest_run_time }} UTC</p>
+        {% endif %}
         {% endif %}
     </section>
 
