@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-from . import db
+from . import db, job
 
 
 def _format_date(iso: str) -> str:
@@ -140,15 +140,34 @@ def create_app() -> Flask:
         actually exists in the database.
         """
         result = db.start_manual_run()
-        # Determine if ``result`` is a newly created run id.
+        # ``result`` is either a new run id (positive int) or minutes to wait (positive int).
+        # To distinguish, we look up the run and ensure its ``started_at`` timestamp is very recent.
         conn = db._get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM runs WHERE id = ?", (result,))
-        if cur.fetchone():
-            # New run was created – redirect to the index page.
+        cur.execute("SELECT started_at FROM runs WHERE id = ?", (result,))
+        row = cur.fetchone()
+        is_new_run = False
+        if row:
+            # Compare the timestamp with now; if within a short window we treat it as the run we just created.
+            from datetime import datetime, timezone
+
+            run_time = datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            # If the run was started within the last 30 seconds, consider it the freshly created manual run.
+            if abs((now - run_time).total_seconds()) < 30:
+                is_new_run = True
+
+        if is_new_run:
+            # Run the job synchronously as required by the spec (rule 15).
+            try:
+                job.run(run_id=result)
+            except Exception:
+                # ``job.run`` handles its own errors and records a failed run.
+                pass
+            # After the job finishes (or fails) redirect to the index page which will now show the updated run.
             return redirect(url_for("index"))
 
-        # ``result`` is the minutes to wait.
+        # ``result`` is the minutes to wait (rate‑limited case).
         wait_minutes = int(result)
         # Render the index page with a note about the rate‑limit.
         latest = db.latest_briefing()

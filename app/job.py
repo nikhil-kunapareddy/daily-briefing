@@ -47,15 +47,19 @@ def _acquire_lock() -> Path:
             time.sleep(1)
 
 
-def run(trigger: str = "schedule") -> None:
+def run(trigger: str = "schedule", *, run_id: int | None = None) -> None:
     """Execute a single ingest run.
 
-    ``trigger`` is stored in the ``runs`` table and distinguishes scheduled
-    runs from manual ``run‑now`` runs.
+    Supports both scheduled runs (default) and manual runs invoked via the ``Run now`` endpoint. If ``run_id`` is ``None`` a new run record is created via :func:`app.db.start_run`. When a ``run_id`` is supplied (the manual case) the existing run is used and no additional row is inserted.
     """
     lock_path = _acquire_lock()
     try:
-        run_id = db.start_run(trigger)
+        # Determine which run identifier to use.
+        if run_id is None:
+            # Scheduled execution – create a fresh run entry.
+            run_id = db.start_run(trigger)
+        # Otherwise we already have the manual run ID.
+
         try:
             papers = arxiv.fetch()
         except Exception as exc:  # pylint: disable=broad-except
@@ -75,8 +79,7 @@ def run(trigger: str = "schedule") -> None:
         seen_ids = {row[0] for row in cur.fetchall()}
         new_papers = [p for p in papers if p["stable_id"] not in seen_ids]
 
-        # Save all fetched papers (the spec says to call ``save_papers`` with the"
-        # full list).
+        # Save all fetched papers (the spec says to call ``save_papers`` with the full list).
         db.save_papers(run_id, papers)
         db.finish_run(run_id, new_count=len(new_papers))
     finally:
