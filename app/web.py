@@ -67,14 +67,31 @@ def create_app() -> Flask:
         template can stay simple.
         """
         latest = db.latest_briefing()
+
+        # Always get run history, even if there are no successful runs yet.
+        raw_runs = db.latest_runs(limit=10)
+        runs: List[Dict[str, Any]] = []
+        for r in raw_runs:
+            runs.append(
+                {
+                    "time": _format_time(r["time"]),
+                    "date_fmt": _format_date(r["time"]),
+                    "datetime_fmt": _format_datetime(r["time"]),
+                    "ok": r["ok"],
+                    "trigger": r["trigger"],
+                    "new_count": r["new_count"],
+                    "error_short": r["error_short"],
+                }
+            )
+
         if latest is None:
-            # No runs yet – render an empty page.
+            # No successful runs yet – render an empty page but with run history.
             return render_template(
                 "index.html",
                 briefing=None,
                 no_new=False,
                 last_with_papers=None,
-                runs=[],
+                runs=runs,
                 run_now_wait=None,
                 latest_run_time=None,
             )
@@ -100,22 +117,6 @@ def create_app() -> Flask:
             last_ctx["datetime_fmt"] = _format_datetime(last_with_papers["date"])
         else:
             last_ctx = None
-
-        # History (newest 10 runs) – format timestamps.
-        raw_runs = db.latest_runs(limit=10)
-        runs: List[Dict[str, Any]] = []
-        for r in raw_runs:
-            runs.append(
-                {
-                    "time": _format_time(r["time"]),
-                    "date_fmt": _format_date(r["time"]),
-                    "datetime_fmt": _format_datetime(r["time"]),
-                    "ok": r["ok"],
-                    "trigger": r["trigger"],
-                    "new_count": r["new_count"],
-                    "error_short": r["error_short"],
-                }
-            )
 
         # Get the latest run time for the "Last checked" display
         latest_run_time = _format_time(latest["date"])
