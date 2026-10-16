@@ -2,7 +2,7 @@
 """Token report from the dispatcher's run log. Plain code, no model: the numbers come from each runtime's own output.
 
     python3 ops/token_report.py issue N    Markdown report for ticket N: its runs and its PRs' runs
-    python3 ops/token_report.py all        Markdown report for every ticket, per agent, per model, and shared runs
+    python3 ops/token_report.py all        Markdown report: per phase, per ticket, per agent, per model, with a plain summary
 
 Reads ~/work/.dispatcher/runs.jsonl and dispatch.log (as the agents user on the VM), plus the PR list from GitHub.
 A PR belongs to ticket N when its branch is <agent>/N-<name> (WORKFLOW.md, Conventions).
@@ -18,7 +18,7 @@ from datetime import datetime
 
 REPO = "nikhil-kunapareddy/daily-briefing"
 STATE = os.path.expanduser(os.environ.get("STATE", "~/work/.dispatcher"))
-RESULTS = {0: "ok", 3: "no progress", 4: "no tool calls", 124: "timed out", 137: "killed"}
+RESULTS = {0: "ok", 3: "no progress", 4: "no tool calls", 5: "rate-limited", 124: "timed out", 137: "killed"}
 
 
 def gh_json(*args):
@@ -66,6 +66,61 @@ def ticket_of(run, prs):
     if kind == "pr" and n.isdigit():
         return prs.get(int(n))
     return None                                   # board, lessons: shared
+
+
+PHASES = ["planning", "coding", "review/test", "retries"]
+
+
+def add_phases(runs):
+    """Label each run with the brief's phases. Plain rules, in run order:
+    planning     the orchestrator (splitting, triage, lessons);
+    coding       a builder's first run on an issue; the tester's first run on its own issue;
+    review/test  the tester's and reviewer's first run on each PR;
+    retries      any failed run, a builder fixing a sent-back PR, and any repeat of the above on the same issue or PR."""
+    seen = set()
+    for r in runs:
+        if r.get("exit", 0) != 0:
+            r["phase"] = "retries"
+        elif r["agent"] == "orchestrator":
+            r["phase"] = "planning"
+        elif (r["agent"], r["key"]) in seen:
+            r["phase"] = "retries"
+        elif r["agent"].startswith("builder-") and r["key"].startswith("pr-"):
+            r["phase"] = "retries"
+        elif r["key"].startswith("issue-"):
+            r["phase"] = "coding"
+        else:
+            r["phase"] = "review/test"
+        seen.add((r["agent"], r["key"]))
+    return runs
+
+
+def summary(runs):
+    """Where the tokens went, in plain words, from the numbers (no model)."""
+    t = totals(runs)
+    if not t["runs"]:
+        return []
+    prompt = t["input"] + (t["cached"] or 0)
+    allt = prompt + t["output"]
+    phase = {p: totals([r for r in runs if r["phase"] == p]) for p in PHASES}
+    top_phase = max(PHASES, key=lambda p: phase[p]["input"])
+    agents = defaultdict(int)
+    for r in runs:
+        agents[r["agent"]] += r.get("input") or 0
+    top_agent = max(agents, key=agents.get)
+    fails = [r for r in runs if r.get("exit", 0) != 0]
+    pct = lambda a, b: f"{100 * a / b:.0f}%" if b else "–"
+    out = [f"- **{t['runs']} runs, {num(allt)} tokens in all.** {pct(prompt, allt)} of them are prompt the model reads "
+           f"(instructions, files, command output, re-sent every turn); only {pct(t['output'], allt)} is text it writes.",
+           f"- **Most input went to {top_phase}** ({pct(phase[top_phase]['input'], t['input'])} of new input tokens). "
+           f"Retries took {pct(phase['retries']['input'], t['input'])}.",
+           f"- **The biggest spender is {top_agent}** ({pct(agents[top_agent], t['input'])} of new input tokens)."]
+    if t["cached"]:
+        out.append(f"- **{pct(t['cached'], prompt)} of the prompt was read from the provider's cache**, which is cheaper and faster.")
+    if fails:
+        out.append(f"- **{len(fails)} failed run(s)** (errors, timeouts, no tool calls or no progress) cost "
+                   f"{num(totals(fails)['input'])} input tokens.")
+    return out
 
 
 def num(x):
@@ -135,7 +190,7 @@ def issue_report(n):
 
 
 def all_report():
-    runs, prs = load_runs(), pr_to_issue()
+    runs, prs = add_phases(load_runs()), pr_to_issue()
     titles = {i["number"]: i["title"] for i in
               gh_json("issue", "list", "-R", REPO, "--state", "all", "--limit", "300", "--json", "number,title")}
     by_ticket = defaultdict(list)
@@ -143,7 +198,17 @@ def all_report():
     for r in runs:
         n = ticket_of(r, prs)
         (by_ticket[n] if n is not None else shared).append(r)
-    out = ["## Tokens per ticket", "",
+    out = ["## Where the tokens went", ""] + summary(runs)
+    out += ["", "## Tokens per phase", "", "| Phase | Runs | Input | Cached | Output | Time |", "|---|---:|---:|---:|---:|---:|"]
+    for ph in PHASES:
+        t = totals([r for r in runs if r["phase"] == ph])
+        out.append(f"| {ph} | {t['runs']} | {num(t['input'])} | {num(t['cached'])} | {num(t['output'])} | {secs(t['secs'])} |")
+    out += ["", "Input tokens by agent and phase:", "",
+            "| Agent | " + " | ".join(PHASES) + " |", "|---|" + "---:|" * len(PHASES)]
+    for agent in sorted({r["agent"] for r in runs}):
+        cells = [num(totals([r for r in runs if r["agent"] == agent and r["phase"] == ph])["input"]) for ph in PHASES]
+        out.append(f"| {agent} | " + " | ".join(cells) + " |")
+    out += ["", "## Tokens per ticket", "",
            "| Ticket | Runs | Input | Cached | Output | Time |", "|---|---:|---:|---:|---:|---:|"]
     for n in sorted(by_ticket):
         t = totals(by_ticket[n])
@@ -157,7 +222,9 @@ def all_report():
                f"**{secs(t['secs'])}** |")
     out += ["", "## Tokens per agent", ""] + group_rows(runs, "agent", "Agent")
     out += ["", "## Tokens per model", ""] + group_rows(runs, "model", "Model")
-    out += ["", "Input excludes cached tokens. \"–\" means not recorded (cached tokens are logged from 2026-10-14 on)."]
+    out += ["", "Input excludes cached tokens. \"–\" means not recorded (cached tokens are logged from 2026-10-14 on).",
+            "Phases: planning = orchestrator; coding = first build of an issue; review/test = first test and first review of a PR;",
+            "retries = failed runs, fixes after a send-back, and repeats of any of these. All numbers come from the runtimes' own counts."]
     return "\n".join(out)
 
 

@@ -1,6 +1,7 @@
 # Lessons
 
-Rules learned from rejected PRs. Read before you start. Each line links to the PR it came from.
-Curated by the orchestrator, merged by the human. At most 20 lines.
+Lessons now live in the pinned GitHub issue **"Lessons"** (#7), as a checklist the human ticks:
+https://github.com/nikhil-kunapareddy/daily-briefing/issues/7
 
-- When using `curl -w "%{http_code}"`, check the exit code of curl itself before trusting the printed status code. (https://github.com/nikhil-kunapareddy/daily-briefing/pull/5#issuecomment-6177891983)
+The dispatcher adds each new `Lesson:` line from a send-back there at once, and puts the list into every agent's
+wake-up message (agents/WORKFLOW.md, Lessons). This file is kept only so old links still lead somewhere.

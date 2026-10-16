@@ -12,15 +12,15 @@
         apiKey: { source: "env", provider: "default", id: "OLLAMA_API_KEY" },
         models: [
           { id: "gpt-oss:120b", name: "gpt-oss:120b", contextWindow: 131072, maxTokens: 32768, reasoning: true },
+          // contextWindow: Ollama's /api/show says 262144 for both (2026-10-15). gemma4 is kept at 131072 on purpose:
+          // OpenClaw trims history sooner, so the tester re-sends less on every turn.
           { id: "gemma4:31b", name: "gemma4:31b", contextWindow: 131072, maxTokens: 32768, reasoning: true },
+          { id: "nemotron-3-ultra", name: "nemotron-3-ultra", contextWindow: 262144, maxTokens: 32768, reasoning: true },
         ],
       },
       // google (GEMINI_API_KEY) and openrouter (OPENROUTER_API_KEY) are built in.
     },
   },
-
-  // Offer the allowed tools directly. With Tool Search on, a model must look a tool up before calling it.
-  tools: { toolSearch: false },
 
   agents: {
     ownership: "explicit",
@@ -36,9 +36,12 @@
         cwd: "/home/agents/work/builder-ingest/repo",          // where its commands run: its own clone
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
-          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+          // gpt-oss sometimes writes a tool call as text; the retry runs on nemotron-3-ultra (3/3 in the test), which
+          // also keeps builders out of the reviewer's model family (Google).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-2.5-flash"],
         },
-        // Only the tools a builder needs, offered directly. Fewer tools, fewer malformed tool calls.
+        // Only the tools a builder needs: fewer tools, a smaller prompt. Tool Search stays on: gpt-oss called tools
+        // correctly 7 of 9 times with it, 2 of 8 without it (2026-10-14).
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
                  exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },   // exec allowlist: exec-allowlist.txt
       },
@@ -49,7 +52,9 @@
         cwd: "/home/agents/work/builder-web/repo",
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
-          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+          // gpt-oss sometimes writes a tool call as text; the retry runs on nemotron-3-ultra (3/3 in the test), which
+          // also keeps builders out of the reviewer's model family (Google).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-2.5-flash"],
         },
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
                  exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
@@ -61,7 +66,9 @@
         cwd: "/home/agents/work/builder-ops/repo",
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
-          fallbacks: ["google/gemini-2.5-flash", "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
+          // gpt-oss sometimes writes a tool call as text; the retry runs on nemotron-3-ultra (3/3 in the test), which
+          // also keeps builders out of the reviewer's model family (Google).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-2.5-flash"],
         },
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
                  exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Wakes at most one agent per run, based on GitHub labels. No model calls here: plain rules only.
-# Runs every 5 minutes from the agents user's crontab (set up by agents/setup.sh). Rules: agents/WORKFLOW.md.
+# Started every 2 minutes by the agents user's crontab, as --chain (set up by ops/setup-vm.sh). Rules: agents/WORKFLOW.md.
 # Logs: ~/work/.dispatcher/dispatch.log (one line per decision), runs.jsonl (model and tokens per run), runs/ (raw output).
 #
-#   ops/dispatcher.sh            normal run
+#   ops/dispatcher.sh            normal run: at most one agent
+#   ops/dispatcher.sh --chain    normal runs back to back, while each one wakes an agent (the handoff)
 #   DRY_RUN=1 ops/dispatcher.sh  print what would happen, change nothing
 #   touch ~/work/.dispatcher/PAUSE   stop all wake-ups until the file is removed (dry runs still work)
 set -euo pipefail
 
 REPO=nikhil-kunapareddy/daily-briefing
+OWNER=${REPO%%/*}                              # the human: tickets they file are work
+BOT=nikhil-gbot                                # the agents' (and the dispatcher's) shared GitHub account
 ROOT=/srv/daily-briefing                       # main-only checkout: prompts, lessons, this script
 WORK=/home/agents/work
 STATE=$WORK/.dispatcher
@@ -23,6 +26,23 @@ declare -A RUNTIME=(
 # shellcheck source=../agents/env.sh
 . "$ROOT/agents/env.sh"                        # PATH, keys, tracing names (cron starts with a bare environment)
 mkdir -p "$STATE/runs" "$STATE/fails"
+
+# Handoff: while each run wakes an agent, the next run starts the moment it ends, so the next step doesn't wait for
+# the clock. The 2-minute cron start catches what no agent does: CI finishing, and the human's merges, approvals
+# and labels. At most MAX_CHAIN runs in a row; the next cron start carries on.
+MAX_CHAIN=${MAX_CHAIN:-12}
+APPROVALS_PER_DAY=${APPROVALS_PER_DAY:-3}       # tickets from agents the orchestrator may approve in 24 hours
+if [ "${1:-}" = --chain ]; then
+  exec 8>"$STATE/chain.lock"
+  flock -n 8 || exit 0                         # a chain is already running
+  for _ in $(seq "$MAX_CHAIN"); do
+    rm -f "$STATE/woke"
+    bash "$0" || true
+    [ -e "$STATE/woke" ] || break              # nothing was waiting
+  done
+  exit 0
+fi
+
 exec 9>"$STATE/lock"
 flock -n 9 || exit 0                           # an agent is still running
 [ -e "$STATE/PAUSE" ] && [ "$DRY_RUN" != 1 ] && exit 0   # a dry run still shows what would happen
@@ -33,9 +53,13 @@ act() { if [ "$DRY_RUN" = 1 ]; then echo "would: $*"; else "$@"; fi; }   # for c
 
 # ---------------------------------------------------------------- board
 
-prs=$(gh pr list -R "$REPO" --state open --limit 100 \
-  --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup)
-issues=$(gh issue list -R "$REPO" --state open --limit 200 --json number,labels,createdAt)
+load_prs() {
+  prs=$(gh pr list -R "$REPO" --state open --limit 100 \
+    --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup,mergeable,body)
+}
+load_prs
+load_issues() { issues=$(gh issue list -R "$REPO" --state open --limit 200 --json number,labels,createdAt,author,body); }
+load_issues
 
 # Open PRs with label $1 and without needs-human, oldest first: "number branch sha" per line.
 prs_with() {
@@ -43,9 +67,10 @@ prs_with() {
     | sort_by(.createdAt)[] | "\(.number) \(.headRefName) \(.headRefOid)"' <<<"$prs"
 }
 
-# Open issues with label $1 and without needs-human, oldest first: one number per line.
+# Open issues with label $1 and without needs-human, needs-approval or blocked, oldest first: one number per line.
 issues_with() {
-  jq -r --arg l "$1" '[.[] | select(any(.labels[]; .name == $l)) | select(all(.labels[]; .name != "needs-human"))]
+  jq -r --arg l "$1" '[.[] | select(any(.labels[]; .name == $l))
+    | select(all(.labels[]; .name != "needs-human" and .name != "needs-approval" and .name != "blocked"))]
     | sort_by(.createdAt)[] | .number' <<<"$issues"
 }
 
@@ -62,10 +87,36 @@ has_status() {
     <<<"$prs" >/dev/null
 }
 
-# How many times PR $1 has been sent back.
-sendbacks() {
-  gh api "repos/$REPO/issues/$1/timeline" --paginate \
-    --jq '.[] | select(.event == "labeled" and .label.name == "changes-requested") | 1' | wc -l
+# Send-backs are counted per check (rule 5): ci, test and review each have their own budget of 2.
+# sendbacks/pr-N holds one line per send-back, naming the check that sent it.
+SENDBACKS=$STATE/sendbacks
+mkdir -p "$SENDBACKS" "$STATE/ci-rerun"
+sent_back() {                                  # sent_back <pr> <check>: count one send-back
+  [ "$DRY_RUN" = 1 ] && return 0
+  echo "$2" >> "$SENDBACKS/pr-$1"
+  log "send-back pr-$1 by $2: $(sendbacks "$1" "$2") so far, 2 allowed"
+}
+sendbacks() {                                  # sendbacks <pr> <check>: how many so far
+  local n; n=$(grep -cx "$2" "$SENDBACKS/pr-$1" 2>/dev/null) || true; echo "${n:-0}"
+}
+over_budget() {                                # over_budget <pr>: the check that sent it back a third time, if any
+  local c
+  for c in ci test review; do [ "$(sendbacks "$1" "$c")" -gt 2 ] && { echo "$c"; return; }; done
+  return 0
+}
+sendback_counts() { echo "CI $(sendbacks "$1" ci), test $(sendbacks "$1" test), review $(sendbacks "$1" review)"; }
+
+# rerun_ci <pr>: re-run the PR's failed pytest job once per commit, in case the failure was a flake.
+rerun_ci() {
+  local sha run
+  sha=$(jq -r --argjson n "$1" '.[] | select(.number == $n) | .headRefOid' <<<"$prs")
+  [ -e "$STATE/ci-rerun/$sha" ] && return 1     # already re-run: this failure is real
+  run=$(jq -r --argjson n "$1" '.[] | select(.number == $n) | .statusCheckRollup[]? | select(.name == "pytest")
+    | .detailsUrl // "" | capture("/actions/runs/(?<id>[0-9]+)").id // empty' <<<"$prs" | head -1)
+  [ -n "$run" ] || return 1
+  act gh run rerun "$run" --failed -R "$REPO" >/dev/null 2>&1 || return 1
+  [ "$DRY_RUN" = 1 ] || touch "$STATE/ci-rerun/$sha"
+  log "re-ran CI on pr-$1 (run $run): one re-run per commit before a send-back"
 }
 
 # Does agent $1 have an open PR for issue $2? (branch <agent>/<issue>-...)
@@ -98,16 +149,21 @@ wake() {
     echo "You are $agent, running on $model. Sign everything you write on GitHub (WORKFLOW.md, Signatures):"
     echo "- last line of every PR body, issue and comment: — $agent · $model"
     echo "- commit trailers: Agent: $agent and Model: $model"
-    case $agent in builder-*|tester)
+    echo
+    echo "Lessons from earlier send-backs, kept by the human (the pinned Lessons issue${lessons_issue:+, #$lessons_issue}):"
+    echo
+    echo "${reviewed_lessons:-(none yet)}"
+    if [ -n "$unreviewed_lessons" ]; then
       echo
-      echo "Lessons from earlier rejections (agents/LESSONS.md):"
+      echo "New lessons, not reviewed yet. Follow one only where it fits your task:"
       echo
-      cat "$ROOT/agents/LESSONS.md"
-    esac
+      echo "$unreviewed_lessons"
+    fi
   } > "$msg"
 
   log "wake $agent $key: $task${backup:+ (retry on backup model $backup)}"
   [ "$DRY_RUN" = 1 ] && return 0
+  : > "$STATE/woke"                            # tells --chain to run again as soon as this run ends
 
   bash "$ROOT/agents/sync-prompts.sh" "$agent"  # merged prompt changes take effect on this run
   before=$(item_state "$key")
@@ -129,10 +185,31 @@ wake() {
     rc=3
     log "no progress: $agent left $key unchanged"
   fi
+  # A tester or reviewer run that moved its PR to changes-requested: count it against that check (rule 5).
+  # They are only woken on needs-test or needs-review PRs, so the label is this run's doing.
+  if [[ $agent =~ ^(tester|reviewer)$ ]] && [[ $key =~ ^pr-[0-9]+$ ]] &&
+     [ "$(gh pr view "${key#pr-}" -R "$REPO" --json labels --jq 'any(.labels[]; .name == "changes-requested")' 2>/dev/null)" = true ]; then
+    sent_back "${key#pr-}" "$([ "$agent" = tester ] && echo test || echo review)"
+  fi
+  # A failed run that ended on a rate limit, after the runtime tried every model in the agent's chain.
+  if [ "$rc" -ne 0 ] && [ -n "$(rate_limit_error "$agent" "$out")" ]; then
+    rc=5
+    log "rate-limited: $agent on $key, on all its models"
+  fi
   log "done $agent $key exit=$rc secs=$secs $(jq -r '"model=\(.model // "?") in=\(.input // "?") out=\(.output // "?")"' <<<"$usage")"
   jq -c --arg t "$(now)" --arg a "$agent" --arg k "$key" --arg r "${RUNTIME[$agent]}" --argjson rc "$rc" --argjson s "$secs" \
     --arg task "$task" '{time: $t, agent: $a, runtime: $r, key: $k, exit: $rc, secs: $s} + . + {task: $task}' \
     <<<"$usage" >> "$STATE/runs.jsonl"
+
+  # Rate-limited: not the item's fault, so no failure is counted and it keeps its labels. The agent cools down.
+  # Any other run in which a model wrote something ends the agent's cooldown.
+  if [ "$rc" -eq 5 ]; then
+    cool_down "$agent" "$key" "$out"
+    return 0
+  fi
+  if [ "$(jq -r '.output // 0' <<<"$usage")" -gt 0 ]; then
+    recovered "$agent" "$(jq -r --arg m "$model" '.model // $m' <<<"$usage")"
+  fi
 
   # Two failed runs in a row on the same item: stop retrying and hand it to the human.
   if [ "$rc" -eq 0 ]; then
@@ -236,10 +313,373 @@ run_usage() {
   esac 2>/dev/null || echo '{}'
 }
 
+# ---------------------------------------------------------------- rate limits
+
+# A rate-limited agent is skipped for 15 min, then 30, 60, at most 120, while the other agents keep working.
+# The first time, the dispatcher files one rate-limit issue for the human. It closes when the agent runs again.
+mkdir -p "$STATE/cooldown"                     # cooldown/<agent>: "<until, epoch s> <times in a row> <issue>"
+RATE_LIMIT='\b429\b|too many requests|rate.?limit|resource.?exhausted|quota|usage limit|limit (reached|exhausted|exceeded)|throttl'
+declare -A SKIPPED=()
+
+# rate_limit_error <agent> <output file>: the error the run ended on, if it is a rate limit; nothing otherwise.
+# Only the runtime's own error is read, never tool output: the app has a rate limit, and its code and tests say so.
+rate_limit_error() {
+  local err=${2%.out}.err line=""
+  case ${RUNTIME[$1]} in
+    openclaw)  # one log line per model attempt; the last one is how the run ended
+      line=$(grep -hE 'All models failed|embedded run agent end:' "$err" 2>/dev/null | tail -1)
+      grep -qE 'isError=true|All models failed' <<<"$line" || line="" ;;
+    hermes)    # the result record's error; stderr only when the run died before writing one
+      if grep -q '"type": *"result"' "$2" 2>/dev/null; then
+        line=$(jq -rR 'fromjson? | select(.type == "result" and .exit_code != 0) | .error // empty' "$2" 2>/dev/null | tail -1)
+      else
+        line=$(grep -iE "$RATE_LIMIT" "$err" 2>/dev/null | tail -1)
+      fi ;;
+  esac
+  grep -iqE "$RATE_LIMIT" <<<"$line" || return 0
+  sed -E 's/[A-Za-z0-9_-]{32,}/…/g' <<<"$line" | cut -c1-300   # no long IDs or anything key-like in the issue
+}
+
+# cooling <agent>: true while the agent is cooling down. Logs the skip once per dispatcher run.
+cooling() {
+  local until
+  read -r until _ 2>/dev/null < "$STATE/cooldown/$1" || return 1
+  [ "$(date +%s)" -lt "$until" ] || return 1
+  [ -n "${SKIPPED[$1]:-}" ] || log "skip $1: rate-limited, next try $(date -u -d "@$until" +%H:%MZ)"
+  SKIPPED[$1]=1
+}
+
+# cool_down <agent> <key> <output file>: after a rate-limited run. Files the rate-limit issue, or comments on it.
+cool_down() {
+  local agent=$1 key=$2 out=$3 f=$STATE/cooldown/$1 times=0 issue="" mins until body
+  read -r _ times issue 2>/dev/null < "$f" || true
+  times=$(( ${times:-0} + 1 ))
+  mins=$(( times >= 4 ? 120 : 15 << (times - 1) ))   # 15, 30, 60, then 120
+  until=$(( $(date +%s) + mins * 60 ))
+  body=$STATE/runs/$(date -u +%Y%m%dT%H%M%SZ)-$agent-rate-limit.md
+  if [ -z "$issue" ]; then
+    cat > "$body" <<EOF
+**$agent can't reach any of its models: they are all rate-limited.**
+
+- **When:** $(now), working on $key. That item keeps its labels and waits; no failure is counted.
+- **Models:** its main model and both backups (WORKFLOW.md, Team). The runtime moves down that list before it gives up.
+- **Last error:** \`$(rate_limit_error "$agent" "$out")\`
+
+**What the dispatcher does:** it skips $agent until $(date -u -d "@$until" +%H:%M) UTC, then tries again,
+waiting 15, 30, 60, then 120 minutes between tries. The other agents keep working. This issue closes by itself
+when $agent runs again.
+
+**What you can do:** wait, check the provider's usage page, or give $agent another model
+(\`agents/openclaw/openclaw.json5\` or \`agents/hermes/$agent.json\`, then \`agents/setup.sh\`).
+
+— dispatcher · no model
+EOF
+    issue=$(gh issue create -R "$REPO" --title "Rate limit: $agent can't reach any of its models" \
+      --label rate-limit --label needs-human --body-file "$body" 2>/dev/null) || true
+    issue=${issue##*/}
+  else
+    printf '%s\n\n— dispatcher · no model\n' "Still rate-limited at $(now), on $key: \`$(rate_limit_error "$agent" "$out")\`. \
+Next try at $(date -u -d "@$until" +%H:%M) UTC." > "$body"
+    gh issue comment "$issue" -R "$REPO" --body-file "$body" >/dev/null 2>&1 || true
+  fi
+  echo "$until $times $issue" > "$f"
+  log "cooldown $agent: $mins min (rate-limited $times time(s) in a row), issue #${issue:-?}"
+}
+
+# recovered <agent> <model>: a model answered again. Ends the cooldown and closes the rate-limit issue.
+recovered() {
+  local f=$STATE/cooldown/$1 issue=""
+  [ -e "$f" ] || return 0
+  read -r _ _ issue < "$f" || true
+  rm -f "$f"
+  if [ -n "$issue" ]; then
+    gh issue close "$issue" -R "$REPO" --comment "Recovered at $(now): $1 ran again, on $2.
+
+— dispatcher · no model" >/dev/null 2>&1 || true
+  fi
+  log "recovered $1, closed #${issue:-?}"
+}
+
+# ---------------------------------------------------------------- 0. released by the human
+
+# needs-human's exit: the human removes the label, after a comment, a ticket edit or a decision. The dispatcher sees it
+# go (it keeps the list of held items in held) and gives the item a fresh start: its send-back and failed-run counts are
+# reset. A PR re-enters where its pipeline label says. The human may swap that label first: changes-requested (default:
+# the builder tries again, reading the human's comment), needs-test or needs-review (test or review it again).
+# A PR left with no pipeline label goes back to its builder.
+held_now=$(jq -rn --argjson p "$prs" --argjson i "$issues" '
+  ($p[] | select(any(.labels[]; .name == "needs-human")) | "pr-\(.number)"),
+  ($i[] | select(any(.labels[]; .name == "needs-human")) | "issue-\(.number)")')
+released=0 rlabel=""
+if [ -e "$STATE/held" ]; then
+  for key in $(comm -23 <(sort -u "$STATE/held") <(sort -u <<<"$held_now")); do
+    n=${key#*-}
+    case $key in                                 # closed or merged while held: nothing to release
+      pr-*) jq -e --argjson n "$n" 'any(.[]; .number == $n)' <<<"$prs" >/dev/null || continue ;;
+      issue-*) jq -e --argjson n "$n" 'any(.[]; .number == $n)' <<<"$issues" >/dev/null || continue ;;
+    esac
+    if [ "$DRY_RUN" != 1 ]; then
+      rm -f "$STATE"/fails/*-"$key"
+      [ "$key" = "pr-$n" ] && [ -e "$SENDBACKS/$key" ] && mv "$SENDBACKS/$key" "$SENDBACKS/$key.before-$(date -u +%Y%m%dT%H%M%SZ)"
+    fi
+    if [ "$key" = "pr-$n" ]; then
+      rlabel=$(jq -r --argjson n "$n" '.[] | select(.number == $n) | [.labels[].name
+        | select(IN("needs-test", "needs-review", "changes-requested", "ready-to-merge"))] | first // ""' <<<"$prs")
+      if [ -z "$rlabel" ]; then
+        act gh pr edit "$n" -R "$REPO" --add-label changes-requested >/dev/null
+        rlabel=changes-requested
+      fi
+      comment "$n" "Dispatcher: released by the human. Send-back and failed-run counts are reset, and the PR re-enters at \`$rlabel\`."
+    fi
+    log "released $key by the human: counts reset${rlabel:+, re-enters at $rlabel}"
+    rlabel=""
+    released=1
+  done
+fi
+[ "$DRY_RUN" = 1 ] || printf '%s\n' "$held_now" > "$STATE/held"
+[ "$released" = 0 ] || load_prs
+
+# ---------------------------------------------------------------- 0a. tickets the human didn't ask for
+
+# Work must trace back to the human, so agents can't create work for each other without end.
+# Work is a ticket the human (the repo owner) filed, or a split of one: a ticket by the agents' account with a line
+# "Part of #N" and the orchestrator's signature, where the human filed #N. Anything else gets needs-approval and waits:
+# a tester's bug, tech-debt, a split of a split, an issue from a stranger on the public repo.
+# Who approves (removes the label): for a ticket from the agents' account, the orchestrator when the dispatcher asks it
+# (section 5a, at most APPROVALS_PER_DAY a day), else the human. For anyone else's ticket, only the human.
+# Each issue is checked once (gated/<n> says what it is), so an approval stays.
+mkdir -p "$STATE/gated"
+owner_issues=$(gh issue list -R "$REPO" --state all --author "$OWNER" --limit 300 --json number --jq '[.[].number]')
+gated=0
+while read -r n author parent; do
+  [ -n "$n" ] && [ ! -e "$STATE/gated/$n" ] || continue
+  if [ "$author" = "$OWNER" ] ||
+     { [ "$author" = "$BOT" ] && [ -n "$parent" ] && jq -e --argjson p "$parent" 'index($p)' <<<"$owner_issues" >/dev/null; }; then
+    [ "$DRY_RUN" = 1 ] || echo work > "$STATE/gated/$n"
+    continue
+  fi
+  if [ "$author" = "$BOT" ]; then
+    who="the orchestrator may approve it if it fits \`SPEC.md\` (at most $APPROVALS_PER_DAY a day); otherwise it waits for the human"
+    kind=agent
+  else
+    who="only the human can approve it"
+    kind=stranger
+  fi
+  act gh issue edit "$n" -R "$REPO" --add-label needs-approval >/dev/null
+  act gh issue comment "$n" -R "$REPO" --body "Dispatcher: this ticket wasn't filed by the human or split from one of their tickets, so it waits for approval: $who. Approving means removing \`needs-approval\`; to reject it, close it.
+
+— dispatcher · no model" >/dev/null
+  [ "$DRY_RUN" = 1 ] || echo "needs-approval $kind" > "$STATE/gated/$n"
+  log "needs-approval #$n (filed by $author${parent:+, part of #$parent})"
+  gated=1
+done < <(jq -r '.[] | select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval" and .name != "lessons"))
+  | (.body // "") as $b | [.number, .author.login,
+      (if $b | test("— orchestrator · ") then ($b | capture("(?im)^[^a-z0-9#]*part of[^#\\n]*#(?<p>[0-9]+)").p // "") else "" end)]
+  | @tsv' <<<"$issues")
+# An approval is the human removing needs-approval, or the orchestrator when asked (5a). If the agents' account removed
+# it any other time, it goes back on.
+while read -r n; do
+  [ -n "$n" ] || continue
+  case $(cat "$STATE/gated/$n" 2>/dev/null) in needs-approval*) ;; *) continue ;; esac
+  by=$(gh api "repos/$REPO/issues/$n/timeline" --paginate --jq '.[] | select(.event == "unlabeled" and .label.name == "needs-approval")
+    | .actor.login' 2>/dev/null | tail -1) || by=""
+  if [ "$by" = "$OWNER" ]; then
+    [ "$DRY_RUN" = 1 ] || echo "approved by the human" > "$STATE/gated/$n"
+    log "approved #$n by the human"
+  elif [ -n "$by" ]; then
+    act gh issue edit "$n" -R "$REPO" --add-label needs-approval >/dev/null
+    act gh issue comment "$n" -R "$REPO" --body "Dispatcher: \`needs-approval\` goes back on. Only the human approves a ticket, or the orchestrator when the dispatcher asks it to.
+
+— dispatcher · no model" >/dev/null
+    log "needs-approval #$n again: removed by $by without being asked"
+    gated=1
+  fi
+done < <(jq -r '.[] | select(all(.labels[]; .name != "needs-approval")) | .number' <<<"$issues")
+[ "$gated" = 0 ] || load_issues                 # an agent may have assigned it in the same run it filed it
+
+# ---------------------------------------------------------------- 0b. PRs that conflict with main, or fell behind it
+
+# Builders work at the same time on branches cut from different points of main. Plain git rules, no model:
+# - A PR that conflicts with main goes back to its owner, to merge origin/main in and resolve it.
+#   It's not the PR's fault, so it doesn't count against its send-backs.
+# - main only takes a PR that is up to date with it (the ruleset's strict check), so nothing merges untested on top of
+#   the latest main. A PR about to be tested, or waiting for the human, that fell behind gets main merged in by GitHub.
+#   The new commit has no test or review yet, so the PR goes round again.
+# lessons PRs are the human's to handle.
+changed=0
+while read -r n branch sha mergeable label; do
+  [ -n "$n" ] || continue
+  owner=${branch%%/*}
+  next=needs-test; [ "$owner" = tester ] && next=needs-review   # nobody tests the tester's own PR
+  if [ "$mergeable" = CONFLICTING ]; then
+    [ "$label" = changes-requested ] && continue                 # already with its owner
+    relabel "$n" changes-requested "$label"
+    comment "$n" "Dispatcher: this PR conflicts with \`main\`. Merge \`origin/main\` into the branch, resolve the conflicts, run the tests, push. (This doesn't count as a send-back.)"
+    log "conflict pr-$n: back to $owner"
+    changed=1
+  elif [[ $label =~ ^(needs-test|ready-to-merge)$ ]] &&
+       [ "$(gh api "repos/$REPO/compare/main...$sha" --jq .behind_by 2>/dev/null || echo 0)" -gt 0 ]; then
+    act gh api -X PUT "repos/$REPO/pulls/$n/update-branch" -f expected_head_sha="$sha" >/dev/null || continue
+    [ "$label" = "$next" ] || relabel "$n" "$next" "$label"
+    comment "$n" "Dispatcher: \`main\` moved on, so main was merged into this branch. The new commit is tested and reviewed again before it can merge."
+    log "behind pr-$n: merged main in, back to $next"
+    changed=1
+  fi
+done < <(jq -r '.[] | select(all(.labels[]; .name != "needs-human" and .name != "lessons"))
+  | ([.labels[].name] | map(select(IN("needs-test", "needs-review", "changes-requested", "ready-to-merge"))) | first // "") as $l
+  | select($l != "") | "\(.number) \(.headRefName) \(.headRefOid) \(.mergeable) \($l)"' <<<"$prs")
+[ "$changed" = 0 ] || load_prs
+
+# ---------------------------------------------------------------- 0c. after a merge: does it work in main?
+
+# A ticket is done when its code works in main, not when its PR merges (PRs say "Refs #N", not "Closes #N").
+# For each PR merged since this check began, with a branch <agent>/<N>-..., plain checks on its merge commit:
+#   1. CI (pytest) on main is green;
+#   2. the VM deployed that commit (or a later one), and scripts/install.sh, once it exists, ran without error;
+#   3. once the app has /healthz (SPEC rule 17), the public /healthz answers 200.
+# All pass: the dispatcher closes ticket N, "works in main". One fails, or still no result 30 minutes after the merge:
+# ticket N stays open (reopened if GitHub closed it), and its builder is woken to fix it in a new PR.
+# A commit status "works-in-main" on the merge commit records each result.
+# GitHub closes an issue when a PR body says "Closes #N" (or Fixes, Resolves) and merges. Here the check closes it,
+# so the dispatcher rewrites those words in open PRs to "Refs #N".
+while read -r n; do
+  [ -n "$n" ] || continue
+  body=$(jq -r --argjson n "$n" '.[] | select(.number == $n) | .body' <<<"$prs" |
+    sed -E 's/\b([Cc]lose[sd]?|[Ff]ix(e[sd])?|[Rr]esolve[sd]?):? +#([0-9]+)/Refs #\3/g')
+  act gh pr edit "$n" -R "$REPO" --body "$body" >/dev/null
+  log "pr-$n: closing keywords rewritten to Refs (tickets close when they work in main)"
+done < <(jq -r '.[] | select((.body // "") | test("(?i)\\b(close[sd]?|fix(e[sd])?|resolve[sd]?):? +#[0-9]+")) | .number' <<<"$prs")
+
+SITE=https://dailyresearch.duckdns.org
+DEPLOY_STATUS=/var/log/daily-briefing/deploy-status.json
+mkdir -p "$STATE/merged" "$STATE/broken"
+merged=$(gh pr list -R "$REPO" --state merged --limit 50 --json number,headRefName,mergeCommit,mergedAt)
+[ -e "$STATE/merged-since" ] || [ "$DRY_RUN" = 1 ] || now > "$STATE/merged-since"   # earlier merges aren't checked
+merged_since=$(cat "$STATE/merged-since" 2>/dev/null || now)
+
+# check_main <sha>: ok | wait | failed: <what>
+check_main() {
+  local sha=$1 ci live install deployed_at code
+  ci=$(gh api "repos/$REPO/commits/$sha/check-runs" --jq '[.check_runs[] | select(.name == "pytest")] | first
+    | if . == null or .status != "completed" then "pending" else .conclusion end' 2>/dev/null) || ci=pending
+  case $ci in
+    success) ;;
+    pending) echo wait; return ;;
+    *) echo "failed: CI (pytest) on main ended $ci for $sha"; return ;;
+  esac
+  live=$(jq -r '.sha // empty' "$DEPLOY_STATUS" 2>/dev/null) || true
+  [ -n "$live" ] && [ "$(gh api "repos/$REPO/compare/$sha...$live" --jq .behind_by 2>/dev/null)" = 0 ] ||
+    { echo wait; return; }                       # the VM hasn't deployed it yet
+  install=$(jq -r '.install' "$DEPLOY_STATUS")
+  case $install in
+    none|ok) ;;
+    *) echo "failed: scripts/install.sh on the VM $install, deploying ${live:0:7} (see /var/log/daily-briefing/deploy.log)"; return ;;
+  esac
+  if grep -rqs --include='*.py' --exclude-dir=tests healthz "$ROOT"; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$SITE/healthz") || true
+    if [ "$code" != 200 ]; then
+      deployed_at=$(date -d "$(jq -r '.time' "$DEPLOY_STATUS")" +%s)
+      [ $(( $(date +%s) - deployed_at )) -gt 600 ] || { echo wait; return; }   # give the service 10 minutes to come up
+      echo "failed: $SITE/healthz answered ${code:-nothing}, expected 200, after deploying ${live:0:7}"; return
+    fi
+  fi
+  echo ok
+}
+
+while read -r pr branch sha merged_at; do
+  [ -n "$pr" ] && [ ! -e "$STATE/merged/$pr" ] && [[ $merged_at > $merged_since ]] || continue
+  n=$(sed -nE 's#^[^/]+/([0-9]+)-.*#\1#p' <<<"$branch")
+  [ -n "$n" ] || continue                        # not a ticket's PR (a lessons PR)
+  verdict=$(check_main "$sha")
+  if [ "$verdict" = wait ] && [ $(( $(date +%s) - $(date -d "$merged_at" +%s) )) -gt 1800 ]; then
+    verdict="failed: no result 30 minutes after the merge (CI on main, or the deploy, never finished)"
+  fi
+  [ "$verdict" = wait ] && continue
+  if [ "$DRY_RUN" = 1 ]; then echo "would: pr-$pr (ticket #$n): $verdict"; continue; fi
+  state=$(gh issue view "$n" -R "$REPO" --json state --jq .state 2>/dev/null) || state=""
+  if [ "$verdict" = ok ]; then
+    gh api "repos/$REPO/statuses/$sha" -f state=success -f context=works-in-main \
+      -f description="CI green on main, deployed, health check passed" >/dev/null || true
+    msg="Works in main: PR #$pr merged as ${sha:0:7}, passed CI on main and was deployed to the VM."
+    if [ "$state" = OPEN ]; then gh issue close "$n" -R "$REPO" --comment "$msg"$'\n\n'"— dispatcher · no model" >/dev/null
+    else gh issue comment "$n" -R "$REPO" --body "$msg"$'\n\n'"— dispatcher · no model" >/dev/null; fi
+    rm -f "$STATE/broken/$n"
+    log "works in main: pr-$pr ($sha), closed #$n"
+  else
+    what=${verdict#failed: }
+    gh api "repos/$REPO/statuses/$sha" -f state=failure -f context=works-in-main -f description="${what:0:140}" >/dev/null || true
+    [ "$state" = CLOSED ] && gh issue reopen "$n" -R "$REPO" >/dev/null
+    gh issue comment "$n" -R "$REPO" --body "Doesn't work in main yet: PR #$pr merged, but $what. This ticket stays open, and its builder is woken to fix it in a new PR."$'\n\n'"— dispatcher · no model" >/dev/null || true
+    gh pr comment "$pr" -R "$REPO" --body "Dispatcher: after the merge, $what. Ticket #$n stays open."$'\n\n'"— dispatcher · no model" >/dev/null || true
+    echo "$what" > "$STATE/broken/$n"
+    log "broken in main: pr-$pr ($sha): $what; #$n back to its builder"
+  fi
+  echo "$verdict" > "$STATE/merged/$pr"
+done < <(jq -r '.[] | "\(.number) \(.headRefName) \(.mergeCommit.oid) \(.mergedAt)"' <<<"$merged")
+
+# ---------------------------------------------------------------- 0d. lessons: one pinned issue, no PR
+
+# Every Lesson: line in a send-back (a comment by the agents' account) goes at once into the pinned "Lessons" issue,
+# as an unticked checklist item. The human ticks a lesson to keep it, or deletes its line to drop it: no PR, no merge.
+# Every wake-up message carries the ticked lessons (reviewed, newest 20) and the newest 10 unticked ones (not reviewed
+# yet). Only the human edits the list: any other edit by the agents' account is undone (lessons-body is the
+# dispatcher's own last version). The issue is made by ops/github-setup.sh.
+lessons_issue=$(cat "$STATE/lessons-issue" 2>/dev/null) || lessons_issue=$(gh issue list -R "$REPO" --state open \
+  --label lessons --json number,title --jq '[.[] | select(.title == "Lessons")][0].number // empty' 2>/dev/null) || true
+lessons_body=""
+if [ -n "$lessons_issue" ]; then
+  [ "$DRY_RUN" = 1 ] || echo "$lessons_issue" > "$STATE/lessons-issue"
+  li=$(gh api graphql -f query='query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) {
+      issue(number: $n) { body editor { login } } } }' -f o="$OWNER" -f r="${REPO#*/}" -F n="$lessons_issue" \
+    --jq '.data.repository.issue' 2>/dev/null) || li=""
+  lessons_body=$(jq -r '.body // ""' <<<"$li" | tr -d '\r')
+  editor=$(jq -r '.editor.login // ""' <<<"$li")
+  last=$(cat "$STATE/lessons-body" 2>/dev/null) || last=""
+  if [ -n "$last" ] && [ "$lessons_body" != "$last" ] && [ "$editor" = "$BOT" ]; then
+    act gh issue edit "$lessons_issue" -R "$REPO" --body-file "$STATE/lessons-body" >/dev/null
+    log "lessons: undid an edit of #$lessons_issue by the agents' account (only the human edits it)"
+    lessons_body=$last
+  fi
+  scan_start=$(now)
+  since=$(cat "$STATE/lessons-scan" 2>/dev/null) || since=$(date -u -d '7 days ago' +%FT%TZ)
+  new=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
+      --jq '.[] | select(.user.login == "'"$BOT"'") | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- [ ] \(.) (\($u))"' \
+      2>/dev/null | tr -d '\r' | grep -v -F -f <(grep -oE 'https://github\.com/[^ )]+' <<<"$lessons_body") || true)
+  if [ -n "$new" ] && [ "$DRY_RUN" != 1 ]; then
+    if grep -q '^<!-- /lessons -->$' <<<"$lessons_body"; then   # new lines go just before the list's end marker
+      lessons_body=$(ADD=$new awk '/^<!-- \/lessons -->$/ { print ENVIRON["ADD"] } { print }' <<<"$lessons_body")
+    else
+      lessons_body="$lessons_body"$'\n'"$new"
+    fi
+    printf '%s\n' "$lessons_body" > "$STATE/lessons-body.new"
+    if gh issue edit "$lessons_issue" -R "$REPO" --body-file "$STATE/lessons-body.new" >/dev/null; then
+      log "lessons: added $(wc -l <<<"$new" | tr -d ' ') to #$lessons_issue"
+    fi
+  fi
+  if [ "$DRY_RUN" != 1 ]; then
+    printf '%s' "$lessons_body" > "$STATE/lessons-body"
+    echo "$scan_start" > "$STATE/lessons-scan"
+  fi
+fi
+reviewed_lessons=$(grep -E '^- \[[xX]\] ' <<<"$lessons_body" | sed -E 's/^- \[[xX]\] /- /' | tail -20 || true)
+unreviewed_lessons=$(grep -E '^- \[ \] ' <<<"$lessons_body" | sed -E 's/^- \[ \] /- /' | tail -10 || true)
+
 # ---------------------------------------------------------------- 1. reviewer
 
 while read -r n branch sha; do
   [ -n "$n" ] || continue
+  # CI comes before review for every PR. A builder's PR passed it on the way to the tester; the tester's own PR skips
+  # the tester, not CI, so it is checked here: still running, wait; red, back to the tester like any red PR.
+  case $(ci_state "$n") in
+    pending) continue ;;
+    failure)
+      rerun_ci "$n" && continue                  # a flake gets one more try; wait for the re-run
+      relabel "$n" changes-requested needs-review
+      comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back without review. (A failure is re-run once per commit first, in case it was a flake.) See the checks tab."
+      sent_back "$n" ci
+      continue ;;
+  esac
+  cooling reviewer && break
   if [[ $branch == tester/* ]] && ! has_status "$n" test/passed; then
     act gh api "repos/$REPO/statuses/$sha" -f state=success -f context=test/passed \
       -f description="Tester's own PR: not self-tested. CI and the reviewer gate it." >/dev/null
@@ -253,13 +693,14 @@ done < <(prs_with needs-review)
 while read -r n branch sha; do
   [ -n "$n" ] || continue
   case $(ci_state "$n") in
-    success) wake tester "pr-$n" "PR #$n needs testing."; exit 0 ;;
+    success) cooling tester && continue
+             wake tester "pr-$n" "PR #$n needs testing."; exit 0 ;;
     failure)
+      rerun_ci "$n" && continue                  # a flake gets one more try; wait for the re-run
       relabel "$n" changes-requested needs-test
-      comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back to the builder without testing. See the checks tab."
-      log "sent back pr-$n: CI failed"
-      prs=$(gh pr list -R "$REPO" --state open --limit 100 \
-        --json number,headRefName,headRefOid,labels,createdAt,statusCheckRollup) ;;
+      comment "$n" "Dispatcher: CI (pytest) failed on this PR, so it goes back to the builder without testing. (A failure is re-run once per commit first, in case it was a flake.) See the checks tab."
+      sent_back "$n" ci
+      load_prs ;;
     pending) ;;
   esac
 done < <(prs_with needs-test)
@@ -270,12 +711,14 @@ while read -r n branch sha; do
   [ -n "$n" ] || continue
   owner=${branch%%/*}
   [[ " ${BUILDERS[*]} " == *" $owner "* ]] || { log "skip pr-$n: branch $branch has no builder prefix"; continue; }
-  if [ "$(sendbacks "$n")" -gt 2 ]; then
-    relabel "$n" needs-human changes-requested
-    comment "$n" "Dispatcher: sent back 3 times. Over to the human (WORKFLOW.md rule 5)."
-    log "needs-human pr-$n after 3 send-backs"
+  over=$(over_budget "$n")
+  if [ -n "$over" ]; then
+    act gh pr edit "$n" -R "$REPO" --add-label needs-human >/dev/null   # keeps changes-requested: where it re-enters
+    comment "$n" "Dispatcher: sent back a third time by the same check ($over). Over to the human (WORKFLOW.md rule 5). Send-backs so far: $(sendback_counts "$n")."
+    log "needs-human pr-$n: third send-back by $over ($(sendback_counts "$n"))"
     continue
   fi
+  cooling "$owner" && continue
   wake "$owner" "pr-$n" "PR #$n was sent back. Fix it."
   exit 0
 done < <(prs_with changes-requested)
@@ -283,33 +726,27 @@ done < <(prs_with changes-requested)
 for agent in "${BUILDERS[@]}"; do
   for n in $(issues_with "assign:$agent"); do
     has_open_pr "$agent" "$n" && continue
-    wake "$agent" "issue-$n" "Issue #$n is assigned to you."
+    task="Issue #$n is assigned to you."
+    if jq -e --arg p "$agent/$n-" 'any(.[]; .headRefName | startswith($p))' <<<"$merged" >/dev/null; then
+      [ -e "$STATE/broken/$n" ] || continue      # merged: waits for the works-in-main check
+      task="Issue #$n is assigned to you. Its PR merged, but it doesn't work in main: $(cat "$STATE/broken/$n")
+Fix it in a new PR, on a branch $agent/$n-fix-<short-name>. If the cause isn't in your code, comment why and add needs-human."
+    fi
+    cooling "$agent" && break
+    wake "$agent" "issue-$n" "$task"
     exit 0
   done
 done
 
-# ---------------------------------------------------------------- 4. orchestrator: daily lessons
-
-# Once a day, collect the Lesson: lines (at the start of a line) posted since the last collection. The orchestrator
-# folds them into agents/LESSONS.md in a PR labelled lessons, which the human merges. Skipped while one is open.
-today=$(date -u +%F)
-if [ "$(cat "$STATE/lessons-day" 2>/dev/null)" != "$today" ] && [ -z "$(prs_with lessons)" ]; then
-  since=$(cat "$STATE/lessons-since" 2>/dev/null || date -u -d '1 day ago' +%FT%TZ)
-  lessons=$(gh api "repos/$REPO/issues/comments?since=$since&per_page=100" --paginate \
-    --jq '.[] | .html_url as $u | .body | scan("(?m)^Lesson:.*$") | "- \(.) (\($u))"')
-  if [ "$DRY_RUN" != 1 ]; then echo "$today" > "$STATE/lessons-day"; now > "$STATE/lessons-since"; fi
-  if [ -n "$lessons" ]; then
-    wake orchestrator lessons "Collect lessons. These Lesson: lines were posted since $since:
-$lessons"
-    exit 0
-  fi
-fi
-
 # ---------------------------------------------------------------- 5. orchestrator: the board
 
+# The board leaves out rate-limit issues (the dispatcher's, for the human), the pinned Lessons issue, and issues
+# waiting for approval.
+# When the human removes needs-approval, the issue shows up as new, and the orchestrator triages it.
 board() {
   gh issue list -R "$REPO" --state all --limit 300 --json number,state,labels \
-    --jq 'map({n: .number, s: .state, l: ([.labels[].name] | sort)}) | sort_by(.n)'
+    --jq 'map(select(all(.labels[]; .name != "rate-limit" and .name != "needs-approval" and .name != "lessons")))
+      | map({n: .number, s: .state, l: ([.labels[].name] | sort)}) | sort_by(.n)'
 }
 save_board() { [ "$DRY_RUN" = 1 ] || board > "$STATE/board.json"; }
 
@@ -327,11 +764,42 @@ for n in $(jq -r '.[] | select(.s == "CLOSED") | .n' <<<"$current"); do
   fi
 done
 
+# 5a. A ticket from the agents' account waiting for approval: the orchestrator decides, once per ticket, and only while
+# today's approvals are under APPROVALS_PER_DAY (counted in approvals, one time per line). Otherwise the human decides.
+mkdir -p "$STATE/approval-asked"
+for n in $(jq -r '.[] | select(any(.labels[]; .name == "needs-approval")) | .number' <<<"$issues"); do
+  [ "$(cat "$STATE/gated/$n" 2>/dev/null)" = "needs-approval agent" ] && [ ! -e "$STATE/approval-asked/$n" ] || continue
+  used=$(awk -v t=$(( $(date +%s) - 86400 )) '$1 > t' "$STATE/approvals" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$used" -ge "$APPROVALS_PER_DAY" ]; then
+    act gh issue comment "$n" -R "$REPO" --body "Dispatcher: the orchestrator's $APPROVALS_PER_DAY approvals for today are used, so this ticket waits for the human.
+
+— dispatcher · no model" >/dev/null
+    [ "$DRY_RUN" = 1 ] || { touch "$STATE/approval-asked/$n"; echo "needs-approval human" > "$STATE/gated/$n"; }
+    log "approval of #$n left to the human: $used approvals in the last 24 h"
+    continue
+  fi
+  cooling orchestrator && break
+  [ "$DRY_RUN" = 1 ] || touch "$STATE/approval-asked/$n"
+  wake orchestrator "issue-$n" "Issue #$n was filed by an agent and waits for approval. Approve it or leave it for the human (your SOUL.md, \"Issue #N waits for approval\")."
+  if [ "$DRY_RUN" != 1 ]; then
+    if gh issue view "$n" -R "$REPO" --json labels --jq 'any(.labels[]; .name == "needs-approval")' | grep -q false; then
+      date +%s >> "$STATE/approvals"
+      echo "approved by the orchestrator" > "$STATE/gated/$n"
+      log "approved #$n by the orchestrator ($(( used + 1 )) of $APPROVALS_PER_DAY today)"
+    else
+      echo "needs-approval human" > "$STATE/gated/$n"
+      log "approval of #$n left to the human by the orchestrator"
+    fi
+  fi
+  exit 0
+done
+
 # An assign:orchestrator issue wakes it once. If the label is still there afterwards, only a board change wakes it again.
 for n in $(issues_with assign:orchestrator); do
   if [ -e "$STATE/handled-issue-$n" ] && [ "$current" = "$(cat "$STATE/board.json" 2>/dev/null)" ]; then
     continue
   fi
+  cooling orchestrator && break
   wake orchestrator "issue-$n" "Issue #$n is assigned to you."
   [ "$DRY_RUN" = 1 ] || touch "$STATE/handled-issue-$n"
   save_board
@@ -350,7 +818,7 @@ changes=$(jq -rn --argjson old "$(cat "$STATE/board.json")" --argjson new "$curr
         elif $p.l != $i.l then "#\($i.n) labels are now: \($i.l | join(", "))"
         else empty end ]
   | join("; ")')
-if [ -n "$changes" ]; then
+if [ -n "$changes" ] && ! cooling orchestrator; then   # while it cools, changes pile up for its next run
   wake orchestrator board "The board changed since your last run: $changes."
   save_board
 fi

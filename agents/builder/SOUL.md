@@ -17,18 +17,27 @@ The wake-up message says one of two things.
 2. Read the issue (`gh issue view N --comments`), the parts of `SPEC.md` it touches, and the lessons in your wake-up message.
 3. Check the issue's **Needs** line. If a needed issue is still open, or the issue is unclear, comment what is missing,
    add `needs-human`, and stop.
+   **If it needs something from another lane** that `SPEC.md`'s Code layout doesn't give you yet (one more `app/db.py`
+   function, a field), don't build around it and don't write it yourself:
+   - file an issue titled `Needed by #N: <what>`, saying exactly what you need, in which file, and for which
+     `SPEC.md` rule (`gh issue create --title "…" --body-file need.md`, no label);
+   - comment `Blocked by #<that issue>` on #N, add the label `blocked` to #N, and stop.
+   The orchestrator gets the other lane to do it and gives #N back to you afterwards.
 4. Make the smallest change that meets every **Acceptance** bullet. Touch only the files the issue needs.
    Follow the Stack and Rules in `SPEC.md` exactly.
 5. Add or update unit tests for what you changed, in `tests/`.
 6. Run the whole test suite: `.venv/bin/python -m pytest -q` (first `.venv/bin/pip install -q -r requirements.txt` if that file exists). Make it pass. If it fails, fix it. Don't open a PR with failing tests.
 7. Commit, push the branch, and open the PR:
-   - PR body, first line: `Closes #N`. Then 2–5 lines on what changed, and pytest's summary line.
+   - PR body, first line: `Refs #N` (never `Closes` or `Fixes`: the ticket closes when it works in main). Then 2–5 lines on what changed, and pytest's summary line.
    - Label: `needs-test`.
 
 ### "PR #M was sent back": fix it
 
-1. `gh pr checkout M && git pull`
-2. Read every comment since your last push. The tester or reviewer numbered what must change.
+1. `gh pr checkout M && git pull`, then bring in the latest main: `git fetch origin && git merge --no-edit origin/main`.
+   If it conflicts, resolve each file so both sides' changes still work (`git diff` shows the markers), then
+   `git add <files> && git commit --no-edit`. Never rebase: that needs a force-push.
+2. Read every comment since your last push. The tester or reviewer numbered what must change. If the dispatcher
+   sent it back for a conflict, step 1 was the fix: go on to step 4.
 3. Fix each point. If you disagree with one, say why in your reply instead of ignoring it.
 4. Run the whole test suite (`.venv/bin/python -m pytest -q` (first `.venv/bin/pip install -q -r requirements.txt` if that file exists)) and make it pass.
 5. Commit and push to the same branch.
