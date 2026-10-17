@@ -347,21 +347,12 @@ def health() -> Optional[Dict[str, Any]]:
 def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
     """Return papers published on the given UTC day, ordered newest first.
 
-    The web layer may pass a ``str`` (e.g. from a query parameter) instead of a
-    ``datetime.date`` instance. This function now accepts both and attempts to
-    coerce a string to a ``date`` using ``date.fromisoformat``. If conversion
-    fails, a ``ValueError`` is raised to make the caller aware of the invalid
-    input.
-
-    Args:
-        day: Either a ``date`` object or an ISO‑format ``YYYY‑MM‑DD`` string
-            representing the UTC day.
-
-    Returns:
-        A list of dicts, each with keys ``stable_id``, ``version``, ``title``,
-        ``pdf_link``, ``published``, ``updated``. Ordered by ``published`` DESC.
+    The function accepts either a ``date`` object or an ISO‑format ``YYYY‑MM‑DD``
+    string. It **does not** consider ``list_day`` – the web layer historically
+    displays papers based solely on their ``published`` timestamp. This aligns
+    with the acceptance criteria and avoids premature changes that belong to a
+    follow‑up ticket.
     """
-    # Accept string input from the web layer and convert to ``date``.
     if isinstance(day, str):
         try:
             day = date.fromisoformat(day)
@@ -372,21 +363,14 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     day_str = day.isoformat()
-    # Join with paper_list_days to get papers associated with the requested list_day.
-    # First, try to get papers that have an explicit list_day entry for the
-    # requested day. If none exist (e.g., legacy runs that did not record a
-    # list_day), fall back to papers whose *published* timestamp falls on the
-    # same UTC date. This mirrors the historic behaviour expected by existing
-    # tests while preserving the new list_day‑based ordering when available.
     cur.execute(
         """
-        SELECT DISTINCT p.stable_id, p.version, p.title, p.pdf_link, p.published, p.updated
-        FROM papers p
-        LEFT JOIN paper_list_days pld ON p.run_id = pld.run_id AND p.stable_id = pld.stable_id
-        WHERE (pld.list_day = ?) OR (pld.list_day IS NULL AND date(p.published) = ?)
-        ORDER BY p.published DESC
+        SELECT stable_id, version, title, pdf_link, published, updated
+        FROM papers
+        WHERE date(published) = ?
+        ORDER BY published DESC
         """,
-        (day_str, day_str),
+        (day_str,),
     )
     return [dict(r) for r in cur.fetchall()]
 
@@ -394,32 +378,17 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
 def oldest_paper_day() -> Optional[date]:
     """Return the earliest day for which we have any paper information.
 
-    The database now tracks a ``list_day`` in ``paper_list_days`` but older rows
-    (or runs that did not provide a day) may only have the original
-    ``published`` timestamp in ``papers``.  Navigation in the web UI needs the
-    earliest day that can be displayed, so we consider both sources.
-
-    The function computes the minimum ``list_day`` and the minimum date part of
-    ``published`` and returns the earlier of the two, or ``None`` if the DB is
-    empty.
+    The web UI navigates based on the ``published`` date of papers. We therefore
+    determine the minimum date from the ``published`` column only, ignoring the
+    ``list_day`` information that is managed by a later ticket. If the database
+    is empty, ``None`` is returned.
     """
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    # Minimum list_day from the new table (may be NULL)
-    cur.execute("SELECT MIN(list_day) AS min_ld FROM paper_list_days")
-    min_ld_row = cur.fetchone()
-    min_ld = min_ld_row["min_ld"] if min_ld_row and min_ld_row["min_ld"] else None
-    # Minimum published date (extract date part) from papers table
     cur.execute("SELECT MIN(date(published)) AS min_pub FROM papers")
-    min_pub_row = cur.fetchone()
-    min_pub = min_pub_row["min_pub"] if min_pub_row and min_pub_row["min_pub"] else None
-    # Determine earliest available date
-    if min_ld is None and min_pub is None:
+    row = cur.fetchone()
+    min_pub = row["min_pub"] if row and row["min_pub"] else None
+    if not min_pub:
         return None
-    if min_ld is None:
-        return date.fromisoformat(min_pub)
-    if min_pub is None:
-        return date.fromisoformat(min_ld)
-    # Both present – compare ISO strings (lexicographic order matches date order)
-    return date.fromisoformat(min_ld if min_ld < min_pub else min_pub)
+    return date.fromisoformat(min_pub)
