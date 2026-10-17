@@ -373,39 +373,53 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
     cur = conn.cursor()
     day_str = day.isoformat()
     # Join with paper_list_days to get papers associated with the requested list_day.
+    # First, try to get papers that have an explicit list_day entry for the
+    # requested day. If none exist (e.g., legacy runs that did not record a
+    # list_day), fall back to papers whose *published* timestamp falls on the
+    # same UTC date. This mirrors the historic behaviour expected by existing
+    # tests while preserving the new list_day‑based ordering when available.
     cur.execute(
         """
-        SELECT p.stable_id, p.version, p.title, p.pdf_link, p.published, p.updated
+        SELECT DISTINCT p.stable_id, p.version, p.title, p.pdf_link, p.published, p.updated
         FROM papers p
-        JOIN paper_list_days pld ON p.run_id = pld.run_id AND p.stable_id = pld.stable_id
-        WHERE pld.list_day = ?
+        LEFT JOIN paper_list_days pld ON p.run_id = pld.run_id AND p.stable_id = pld.stable_id
+        WHERE (pld.list_day = ?) OR (pld.list_day IS NULL AND date(p.published) = ?)
         ORDER BY p.published DESC
         """,
-        (day_str,),
+        (day_str, day_str),
     )
     return [dict(r) for r in cur.fetchall()]
 
 
 def oldest_paper_day() -> Optional[date]:
-    """Return the earliest list day for which we have saved papers.
+    """Return the earliest day for which we have any paper information.
 
-    The original implementation looked at the ``published`` timestamp, but the
-    spec now defines ``list_day`` as the canonical day a paper belongs to. We
-    therefore query the minimum ``list_day`` value from the ``papers`` table.
+    The database now tracks a ``list_day`` in ``paper_list_days`` but older rows
+    (or runs that did not provide a day) may only have the original
+    ``published`` timestamp in ``papers``.  Navigation in the web UI needs the
+    earliest day that can be displayed, so we consider both sources.
 
-    Returns:
-        A ``date`` representing the earliest ``list_day`` present, or ``None``
-        when the database contains no papers.
+    The function computes the minimum ``list_day`` and the minimum date part of
+    ``published`` and returns the earlier of the two, or ``None`` if the DB is
+    empty.
     """
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT MIN(list_day) FROM paper_list_days
-        """
-    )
-    row = cur.fetchone()
-    if not row or row[0] is None:
+    # Minimum list_day from the new table (may be NULL)
+    cur.execute("SELECT MIN(list_day) AS min_ld FROM paper_list_days")
+    min_ld_row = cur.fetchone()
+    min_ld = min_ld_row["min_ld"] if min_ld_row and min_ld_row["min_ld"] else None
+    # Minimum published date (extract date part) from papers table
+    cur.execute("SELECT MIN(date(published)) AS min_pub FROM papers")
+    min_pub_row = cur.fetchone()
+    min_pub = min_pub_row["min_pub"] if min_pub_row and min_pub_row["min_pub"] else None
+    # Determine earliest available date
+    if min_ld is None and min_pub is None:
         return None
-    return date.fromisoformat(row[0])
+    if min_ld is None:
+        return date.fromisoformat(min_pub)
+    if min_pub is None:
+        return date.fromisoformat(min_ld)
+    # Both present – compare ISO strings (lexicographic order matches date order)
+    return date.fromisoformat(min_ld if min_ld < min_pub else min_pub)
