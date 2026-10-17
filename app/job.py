@@ -87,22 +87,12 @@ def run(trigger: str = "schedule", run_id: int | None = None) -> None:
         seen_ids = {row[0] for row in cur.fetchall()}
         new_papers = [p for p in papers if p["stable_id"] not in seen_ids]
 
-        # Save all fetched papers, tagging each with the correct ``list_day``.
-        # The spec expects a paper to appear under the UTC day of its ``published``
-        # timestamp. Extract the date portion from the ISO‑8601 timestamp.
-        from datetime import date
-        for paper in papers:
-            try:
-                # Extract the date portion (first 10 characters: YYYY-MM-DD).
-                date_str = paper["published"][:10]
-                # Validate it's a valid ISO date.
-                date.fromisoformat(date_str)
-                list_day = date_str
-            except Exception:
-                # Fallback to the configured first list day if parsing fails.
-                list_day = config.FIRST_LIST_DAY.isoformat()
-            # Save each paper individually with its computed list_day.
-            db.save_papers(run_id, [paper], list_day=list_day)
+        # Save all fetched papers. In this ticket we do **not** yet assign a
+        # list day to each paper; that will be done in the follow-up job ticket
+        # together with the tester's behaviour tests. For now we call
+        # ``save_papers`` without a ``list_day`` so the new ``paper_list_days``
+        # table is not populated.
+        db.save_papers(run_id, papers, list_day=None)
         # Record the run outcome with the count of new papers.
         db.finish_run(run_id, new_count=len(new_papers))
     finally:
