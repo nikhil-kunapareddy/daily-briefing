@@ -5,12 +5,19 @@ It says what must be true, not how to code it. This is v1, kept small on purpose
 
 ## Goal
 
-A small public web app that, once a day, fetches the 5 newest submissions in arXiv's `cs.MA` category (multi-agent
-systems), saves every run, and shows what is new since the last run.
+A small public web app that, once a day, fetches the 5 newest papers in arXiv's daily `cs.MA` list (multi-agent
+systems), saves every run, and shows each day's papers under the day arXiv lists them.
 
-- **Source:** the arXiv API, one request per run:
-  `https://export.arxiv.org/api/query?search_query=cat:cs.MA&sortBy=submittedDate&sortOrder=descending&max_results=5`
-  Sorted by submission date, so a new version of an old paper never takes a new paper's place.
+- **arXiv's list days:** arXiv posts one `cs.MA` list each weekday, Monday to Friday, at 20:00 New York time the
+  evening before; `https://arxiv.org/list/cs.MA/recent` shows it under that weekday. The list for day D holds the
+  papers submitted from 14:00 New York time on the weekday two weekdays before D up to 13:59 on the weekday before D:
+  Friday's list is Wednesday 14:00 to Thursday 13:59, Monday's is Thursday to Friday, Tuesday's is Friday to Monday.
+  New York time follows US daylight saving. There is no list on Saturday or Sunday. arXiv's holidays are not modelled.
+- **Source:** the arXiv API, one request per list day, for that list's 5 newest papers:
+  `https://export.arxiv.org/api/query?search_query=cat:cs.MA+AND+submittedDate:[<start>+TO+<end>]&sortBy=submittedDate&sortOrder=descending&max_results=5`
+  `<start>` and `<end>` are the list day's window in UTC as `YYYYMMDDHHMM`: Fri 16 Oct 2026 is
+  `[202610141800+TO+202610151759]`. Sorted by submission date, so a new version of an old paper never takes a new
+  paper's place.
 - **Schedule:** every day at 02:00 UTC (after arXiv's evening announcement, with or without US daylight saving).
 - **Public page:** one UTC day's papers at a time, starting with today, with arrows to earlier days; the run history
   below. No login.
@@ -26,10 +33,10 @@ flowchart TD
   RN["<b>Run now</b> · POST /run-now<br/>rate limit + new row, one transaction (16)"]
   JR["app.job.run(run_id), inside the request (15)"]
   LK{{"run.lock free? (8)"}}
-  RQ["1 arXiv request: the 5 newest submissions,<br/>3 s after the last request, with a User-Agent (9)"]
-  OK{{"usable response? (6)"}}
-  F(["failed run: nothing marked seen, 0 new (6)"])
-  NW["new = stable ID never seen (1–4)<br/>save the papers this run saw (7)"]
+  RQ["1 request per missing list day, oldest first, at most 5:<br/>its 5 newest, 3 s apart, with a User-Agent (9)"]
+  OK{{"every response usable? (6)"}}
+  F(["failed run: nothing marked seen, 0 new;<br/>the next run fetches the same days (6)"])
+  NW["new = stable ID never seen (1–4)<br/>save the papers this run saw, with their list day (7)"]
   SV(["run saved: time · ✓ or ✗ · trigger · seen · new · error (5)"])
   PG["the page reads it through app/db.py (10–12)"]
 
@@ -88,31 +95,36 @@ flowchart TD
 **Saving runs**
 5. **Every run is saved**, successful or not: start and finish time (UTC), ✓ or ✗, schedule or Run now, how many
    papers it saw, how many were new, and the error for a failed run.
-6. A run **fails** when the request errors or takes over 10 seconds, arXiv answers with a non-200 status, the response
-   can't be parsed, it contains **no entries** (arXiv sometimes sends a normal-looking response with no results), or
-   its entry is arXiv's error entry (an `<id>` that starts with `https://arxiv.org/api/errors`). A failed run marks
-   nothing as seen, and its new count is 0.
-7. The database keeps which papers each run saw. **Nothing saved is ever deleted or rewritten**, and schema changes
-   only add. Per paper, only: stable ID and version (from `<id>`), the title with line breaks and repeated spaces
+6. A run **fails** when any of its requests errors or takes over 10 seconds, arXiv answers with a non-200 status, a
+   response can't be parsed, it contains **no entries** (arXiv sometimes sends a normal-looking response with no
+   results), or its entry is arXiv's error entry (an `<id>` that starts with `https://arxiv.org/api/errors`). A failed
+   run marks nothing as seen, and its new count is 0. The next run fetches the same list days again.
+7. The database keeps which papers each run saw, and the list day each was fetched for, so a day's papers never
+   depend on the date a run happened. **Nothing saved is ever deleted or rewritten**, and schema changes only add. Per paper, only: stable ID and version (from `<id>`), the title with line breaks and repeated spaces
    collapsed, the PDF link (`<link title="pdf">`), `<published>` and `<updated>`. Never its abstract or authors.
 8. One run at a time: a run holds a lock file in the data folder, and a second run waits for it.
 
 **Being polite to arXiv**
-9. One request per run, and at most one request every 3 seconds. Send a `User-Agent` that names the app and links
-   to this repo.
+9. One request per list day, at most 5 per run, and at most one request every 3 seconds. Send a `User-Agent` that
+   names the app and links to this repo. A run fetches each list day from **Thu 15 Oct 2026** up to the latest one
+   arXiv has posted (list D is up by 01:00 UTC on D) that no successful run has fetched yet, oldest first; any beyond
+   5 wait for the next run. So a missed or failed run catches up by itself. When no list day is missing, the run
+   fetches the latest one again, so Run now always checks arXiv.
 
 **The page** (`GET /`)
-10. **One UTC day at a time.** A day's papers are the saved papers whose `<published>` date (UTC) is that day, so the
-    date shown is the day the papers were submitted, never the day the app ran. Newest first, as a table:
+10. **One UTC day at a time.** A day's papers are the saved papers from arXiv's list for that day (Goal: arXiv's list
+    days), so the page's Fri 16 Oct shows papers from the list arxiv.org shows as "Fri, 16 Oct", never by the day
+    they were submitted or the day the app ran. Newest first, as a table:
     **S.No** (1, 2, 3…) · **Title** (plain text) · **DOI** (`10.48550/arXiv.<stable ID>`) · **PDF** (a link to the
-    entry's `<link title="pdf">`). Above the table: the day's date between two arrows ("← Wed 14 Oct 2026 →"), then
+    entry's `<link title="pdf">`). Above the table: the day's date between two arrows ("← Thu 15 Oct 2026 →"), then
     "N new papers from this day · Last checked 02:00 UTC" (the latest successful run). `/` is today (UTC), and
     `/?day=YYYY-MM-DD` is any other day. ← goes to the day before and → to the day after, as plain links. On the
     oldest day that has papers, ← is greyed out and does nothing; on today, → is. A day before that or after today,
     or a malformed date, answers 404.
 11. **A day with no papers** says so in one friendly line instead of the table, never as an empty table, and its
-    arrows stay. Today: "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
-    Any earlier day: "No new papers from Sat 17 Oct 2026." The line under the date then reads only "Last checked … UTC".
+    arrows stay. Today, Monday to Friday: "No papers for today yet. The next check is at 02:00 UTC." Any Saturday or
+    Sunday: "arXiv doesn't post new papers on Saturdays and Sundays." Any earlier weekday: "No new papers from
+    Mon 19 Oct 2026." The line under the date then reads only "Last checked … UTC".
 12. **Run history** below, the same on every day: the newest 10 runs, newest first, each with its time (UTC), ✓ or ✗,
     schedule or Run now, and the new count ("no new submissions" instead of 0, and "First run: everything is new" on
     the first successful run). A failed row shows its error in short.
@@ -137,14 +149,14 @@ flowchart TD
     New papers in arXiv cs.MA (multi-agent systems),    At most once every 10 minutes
     every day at 02:00 UTC
     ───────────────────────────────────────────────────────────────────────
-    ←  Wed 14 Oct 2026  →
+    ←  Thu 15 Oct 2026  →
     5 new papers from this day · Last checked 02:00 UTC
     ┌──────┬──────────────────────────────────────────┬───────────────────────────┬─────┐
     │ S.NO │ TITLE                                    │ DOI                       │ PDF │
     │ 1    │ The Wealth of Agents: Scaling Agentic AI │ 10.48550/arXiv.2610.20518 │ PDF │
     └──────┴──────────────────────────────────────────┴───────────────────────────┴─────┘
     On a day with no papers (rule 11), in place of the table:
-    ▌No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC.
+    ▌No papers for today yet. The next check is at 02:00 UTC.
 
     Run history
     All times UTC.
@@ -170,7 +182,7 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
 
 | Path | Lane | What it holds |
 |---|---|---|
-| `app/__init__.py`, `app/config.py` | builder-ingest | The package, and the one place for settings (data folder, arXiv URL, User-Agent) |
+| `app/__init__.py`, `app/config.py` | builder-ingest | The package, and the one place for settings (data folder, arXiv URL, first list day, User-Agent) |
 | `app/db.py` | builder-ingest | The schema and **all** SQL, including the functions below |
 | `app/arxiv.py`, `app/job.py` | builder-ingest | The request and parsing (rules 6–7); one run (rules 1–9); `python -m app.job` |
 | `app/web.py`, `app/templates/`, `app/static/style.css` | builder-web | `create_app()`, the routes `/`, `POST /run-now`, `/healthz`, the page (rules 10–19) |
@@ -181,12 +193,14 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
 
 **Touch points between lanes** (fixed here; they don't change unless this spec does):
 - The web side reads data **only** through `app/db.py`: `latest_briefing()`, `last_briefing_with_papers()`,
-  `latest_runs(limit)`, `health()`, `papers_for_day(day)` (that UTC day's papers, newest first) and
+  `latest_runs(limit)`, `health()`, `papers_for_day(day)` (the papers from arXiv's list for that day, newest first) and
   `oldest_paper_day()` (a date, or `None` when nothing is saved). Each returns plain dicts and lists.
 - Run now calls `start_manual_run()` in `app/db.py` (the rate-limit check and the new row, one transaction), which
   returns the run's id or how many minutes to wait, then `app.job.run(run_id)`. The schedule runs `python -m app.job`.
-- The job writes **only** through `app/db.py`: `start_run(trigger)`, `save_papers(run_id, papers)`,
-  `finish_run(run_id, error=None)`. Tests in any lane fill a test database only through these, never with their own SQL.
+- The job writes **only** through `app/db.py`: `start_run(trigger)`, `save_papers(run_id, papers)` (each paper with
+  the list day it was fetched for), `finish_run(run_id, error=None)`. It reads `fetched_list_days()` (the list days
+  saved by successful runs) to choose what to fetch. Tests in any lane fill a test database only through these, never
+  with their own SQL.
 - gunicorn serves `app.web:create_app()`. Settings come from `app/config.py` only.
 
 **A sensible order** (the orchestrator decides; Needs go by this):
@@ -207,11 +221,17 @@ the work along these lanes and takes each ticket's "Files likely touched" from t
    duplicates, leaving a database backup each time and never more than 10.
 5. `python -m pytest` passes in CI, and the tests cover at least:
    - the same fixture run twice: the first run's history row says "First run: everything is new", the second has 0 new;
-   - days: each paper is listed under its `<published>` UTC date; ← and → move one day and are greyed out at the
-     oldest day with papers and at today; a day with no papers shows its one line; an out-of-range or malformed day
-     answers 404;
+   - list days: the window of Friday's list (Wednesday 14:00 to Thursday 13:59 New York time), Monday's (Thursday to
+     Friday), Tuesday's (Friday to Monday), and one across a daylight-saving change; a run fetches the missing list
+     days oldest first, at most 5, and the latest one again when none is missing;
+   - days: each paper is listed under the list day it was fetched for, not its `<published>` date; ← and → move one
+     day and are greyed out at the oldest day with papers and at today; a weekday with no papers and a Saturday each
+     show their one line; an out-of-range or malformed day answers 404;
    - the version rule: `…v1` then `…v2` is not new, a first-seen `…v3` is new;
    - a failed fetch, an empty response and arXiv's error entry are each saved as a failed run;
    - titles are saved with their whitespace collapsed;
    - the Run now rate limit, including two presses at once;
    - `/healthz`.
+6. On the live site, Thu 15 Oct 2026 shows the 5 newest papers of arXiv's Thursday list (2610.20518, 2610.20437,
+   2610.20399, 2610.20277, 2610.20205) and Fri 16 Oct the 5 newest of Friday's (2610.22322, 2610.22316, 2610.22287,
+   2610.22277, 2610.22201). Sat 17 and Sun 18 show the weekend line.
