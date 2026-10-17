@@ -39,8 +39,12 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
 
     The schema is deliberately simple: a ``runs`` table tracks each execution and a
     ``papers`` table stores the fetched paper metadata linked to a run.
+    Handles additive migrations for existing databases.
     """
     cur = conn.cursor()
+    # First, create tables without the list_day column in the papers definition
+    # (we'll add it via migration if needed). This avoids issues with CREATE TABLE IF NOT EXISTS
+    # on tables that exist with a different schema.
     cur.executescript(
         """
         CREATE TABLE IF NOT EXISTS runs (
@@ -68,6 +72,18 @@ def _initialize_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
         """
     )
+    # Additive migration: ensure list_day column exists (for databases created
+    # before this column was added). Use a default of FIRST_LIST_DAY for existing rows.
+    cur.execute("PRAGMA table_info(papers)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "list_day" not in columns:
+        default_list_day = config.FIRST_LIST_DAY.isoformat()
+        cur.execute(
+            f"ALTER TABLE papers ADD COLUMN list_day TEXT NOT NULL DEFAULT '{default_list_day}'"
+        )
+        conn.commit()
+    # Now create the list_day index (after column is guaranteed to exist)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_papers_list_day ON papers(list_day)")
     conn.commit()
 
 
@@ -129,20 +145,33 @@ def start_manual_run() -> int:
         raise
 
 
-def save_papers(run_id: int, papers: Iterable[Dict[str, Any]]) -> None:
+def save_papers(
+    run_id: int,
+    papers: Iterable[Dict[str, Any]],
+    list_day: str | None = None,
+) -> None:
     """Insert paper records linked to ``run_id``.
 
     ``papers`` is an iterable of dicts with keys:
     ``stable_id, version, title, pdf_link, published, updated``.
     Whitespace in the title is collapsed to a single space.
+
+    ``list_day`` is the ISO‑format date string representing the list day the
+    papers were fetched for. If omitted the function falls back to the first
+    configured list day (``config.FIRST_LIST_DAY``) to preserve backwards
+    compatibility with existing callers and tests.
     """
+    if list_day is None:
+        # Preserve historic behaviour for callers that did not supply a list_day.
+        list_day = config.FIRST_LIST_DAY.isoformat()
+
     conn = _get_connection()
     cur = conn.cursor()
     for p in papers:
         title = " ".join(p["title"].split())
         cur.execute(
-            "INSERT OR IGNORE INTO papers (run_id, stable_id, version, title, pdf_link, published, updated)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO papers (run_id, stable_id, version, title, pdf_link, published, updated, list_day)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 p["stable_id"],
@@ -151,6 +180,7 @@ def save_papers(run_id: int, papers: Iterable[Dict[str, Any]]) -> None:
                 p["pdf_link"],
                 p["published"],
                 p["updated"],
+                list_day,
             ),
         )
     conn.commit()
@@ -273,6 +303,30 @@ def latest_runs(limit: int = 10) -> List[Dict[str, Any]]:
     return runs
 
 
+def fetched_list_days() -> List[str]:
+    """Return a list of ISO‑format ``list_day`` strings for runs that finished
+    successfully (i.e. ``error IS NULL``) and have at least one paper.
+
+    The function queries distinct ``list_day`` values from the ``papers`` table
+    where the owning run succeeded. The result is sorted chronologically
+    (oldest first) to match the spec's expectation of a simple list.
+    """
+    conn = _get_connection()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT p.list_day
+        FROM papers p
+        JOIN runs r ON p.run_id = r.id
+        WHERE r.error IS NULL
+        ORDER BY p.list_day ASC
+        """
+    )
+    # Return as list of strings (ISO dates). The column is already stored as ISO.
+    return [row[0] for row in cur.fetchall()]
+
+
 def health() -> Optional[Dict[str, Any]]:
     """Return a tiny health dict or ``None`` if no runs exist yet.
 
@@ -318,14 +372,12 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    # The published field is stored as ISO string with timezone (e.g., 2026-10-10T12:00:00Z).
-    # We extract the date part and compare with the given day.
     day_str = day.isoformat()
     cur.execute(
         """
         SELECT stable_id, version, title, pdf_link, published, updated
         FROM papers
-        WHERE date(published) = ?
+        WHERE list_day = ?
         ORDER BY published DESC
         """,
         (day_str,),
@@ -334,17 +386,22 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
 
 
 def oldest_paper_day() -> Optional[date]:
-    """Return the earliest UTC date among saved papers, or ``None`` if no papers exist.
+    """Return the earliest list day for which we have saved papers.
+
+    The original implementation looked at the ``published`` timestamp, but the
+    spec now defines ``list_day`` as the canonical day a paper belongs to. We
+    therefore query the minimum ``list_day`` value from the ``papers`` table.
 
     Returns:
-        A ``date`` of the oldest paper's published date, or ``None``.
+        A ``date`` representing the earliest ``list_day`` present, or ``None``
+        when the database contains no papers.
     """
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT MIN(date(published)) FROM papers
+        SELECT MIN(list_day) FROM papers
         """
     )
     row = cur.fetchone()

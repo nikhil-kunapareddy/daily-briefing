@@ -87,8 +87,10 @@ def run(trigger: str = "schedule", run_id: int | None = None) -> None:
         seen_ids = {row[0] for row in cur.fetchall()}
         new_papers = [p for p in papers if p["stable_id"] not in seen_ids]
 
-        # Save all fetched papers (the spec says to call ``save_papers`` with the full list).
-        db.save_papers(run_id, papers)
+        # Save all fetched papers, tagging them with the list day they belong to.
+        # For now we use the configured first list day as the default list day.
+        # Future enhancements will compute the actual day based on the fetch schedule.
+        db.save_papers(run_id, papers, list_day=config.FIRST_LIST_DAY.isoformat())
         db.finish_run(run_id, new_count=len(new_papers))
     finally:
         # Release the lock – ignore errors if the file was already removed.
