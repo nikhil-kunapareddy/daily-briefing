@@ -110,7 +110,7 @@ def test_index_shows_first_run_message():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id, new_count=1)
 
     # Request the explicit day of the paper instead of the generic '/' which shows today.
@@ -134,12 +134,12 @@ def test_index_shows_no_new_with_previous_briefing():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id1, papers1)
+    db.save_papers(run_id1, papers1, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id1, new_count=1)
 
     # Second run with no new papers (same paper)
     run_id2 = db.start_run("cron")  # Use cron trigger to avoid rate limit
-    db.save_papers(run_id2, papers1)
+    db.save_papers(run_id2, papers1, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id2, new_count=0)
 
     resp = client.get("/")
@@ -285,7 +285,7 @@ def test_responsive_classes_present():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id, new_count=1)
 
     # View the day with papers
@@ -313,7 +313,7 @@ def test_paper_title_bold():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id, new_count=1)
 
     resp = client.get("/?day=2026-10-14")
@@ -333,7 +333,7 @@ def test_doi_format():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id, new_count=1)
 
     resp = client.get("/?day=2026-10-14")
@@ -354,12 +354,12 @@ def test_no_new_submissions_text():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id1, papers1)
+    db.save_papers(run_id1, papers1, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id1, new_count=1)
 
     # Second run with no new papers.
     run_id2 = db.start_run("cron")
-    db.save_papers(run_id2, papers1)
+    db.save_papers(run_id2, papers1, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id2, new_count=0)
 
     resp = client.get("/")
@@ -389,7 +389,7 @@ def test_rate_limited_page_shows_briefing_date_and_times():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id, new_count=1)
     
     # First POST to /run-now should create a manual run and redirect
@@ -436,12 +436,12 @@ def test_rate_limited_page_shows_no_new_state():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run_id1, papers1)
+    db.save_papers(run_id1, papers1, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id1, new_count=1)
     
     # Second run with no new papers (same paper) using cron trigger
     run_id2 = db.start_run("cron")
-    db.save_papers(run_id2, papers1)
+    db.save_papers(run_id2, papers1, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run_id2, new_count=0)
     
     # First POST to /run-now should create a manual run and redirect
@@ -491,7 +491,7 @@ def test_issue_42_day_navigation_and_boundaries():
         "published": "2026-10-13T00:00:00Z",
         "updated": "2026-10-13T00:00:00Z",
     }]
-    db.save_papers(run1, paper1)
+    db.save_papers(run1, paper1, list_day=date(2026, 10, 13).isoformat())
     db.finish_run(run1, new_count=1)
 
     # Day 2: 2026-10-14
@@ -504,7 +504,7 @@ def test_issue_42_day_navigation_and_boundaries():
         "published": "2026-10-14T00:00:00Z",
         "updated": "2026-10-14T00:00:00Z",
     }]
-    db.save_papers(run2, paper2)
+    db.save_papers(run2, paper2, list_day=date(2026, 10, 14).isoformat())
     db.finish_run(run2, new_count=1)
 
     # Verify navigation arrows for the middle day (2026-10-14)

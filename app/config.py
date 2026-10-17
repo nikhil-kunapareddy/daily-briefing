@@ -5,6 +5,7 @@ constants used by the ingest and web lanes.
 """
 
 import os
+from datetime import date
 from pathlib import Path
 
 # Required data directory. The ingest lane stores SQLite files here. Raise a
@@ -22,4 +23,8 @@ ARXIV_API_URL = "https://export.arxiv.org/api/query"
 # User‑Agent string identifying the application and linking back to the repo.
 # Use plain ASCII hyphen in the User-Agent to avoid UnicodeEncodeError in HTTP headers.
 USER_AGENT = "daily-briefing/1.0 (+https://github.com/nikhil-kunapareddy/daily-briefing)"
+
+# The first day for which we want to fetch listings. The ingest job will fetch
+# listings for this day and all subsequent days up to the current day.
+FIRST_LIST_DAY = date(2026, 10, 15)
 

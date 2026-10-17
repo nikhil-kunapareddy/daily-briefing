@@ -98,7 +98,8 @@ def test_save_papers():
             "updated": "2026-10-10T12:00:00Z",
         }
     ]
-    db.save_papers(run_id, papers)
+    # Save with explicit list_day matching the test date (2026-10-10).
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 10).isoformat())
     db.finish_run(run_id, new_count=1)
     briefing = db.latest_briefing()
     assert briefing is not None
@@ -317,7 +318,11 @@ def test_latest_runs_in_progress_shows_none_ok():
 from datetime import date
 
 def test_papers_for_day_with_papers():
-    """Test papers_for_day returns papers for a day that has papers."""
+    """Test papers_for_day returns papers for a day that has papers.
+
+    The function now filters by the `list_day` column, so we store the papers
+    with an explicit `list_day` matching the queried date.
+    """
     run_id = db.start_run("test")
     papers = [
         {
@@ -337,7 +342,7 @@ def test_papers_for_day_with_papers():
             "updated": "2026-10-10T14:00:00Z",
         },
     ]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 10).isoformat())
     db.finish_run(run_id, new_count=2)
 
     result = db.papers_for_day(date(2026, 10, 10))
@@ -363,10 +368,10 @@ def test_papers_for_day_no_papers():
             "updated": "2026-10-10T12:00:00Z",
         },
     ]
-    db.save_papers(run_id, papers)
+    db.save_papers(run_id, papers, list_day=date(2026, 10, 10).isoformat())
     db.finish_run(run_id, new_count=1)
 
-    # Query a different day
+    # Query a different day should return empty list.
     result = db.papers_for_day(date(2026, 10, 11))
     assert result == []
 
@@ -378,7 +383,7 @@ def test_papers_for_day_empty_database():
 
 
 def test_oldest_paper_day_with_papers():
-    """Test oldest_paper_day returns the earliest date when papers exist."""
+    """Test oldest_paper_day returns the earliest list_day when papers exist."""
     run_id = db.start_run("test")
     papers = [
         {
@@ -398,7 +403,9 @@ def test_oldest_paper_day_with_papers():
             "updated": "2026-10-10T14:00:00Z",
         },
     ]
-    db.save_papers(run_id, papers)
+    # Save with distinct list_days matching the published dates.
+    db.save_papers(run_id, [papers[0]], list_day=date(2026, 10, 12).isoformat())
+    db.save_papers(run_id, [papers[1]], list_day=date(2026, 10, 10).isoformat())
     db.finish_run(run_id, new_count=2)
 
     result = db.oldest_paper_day()
