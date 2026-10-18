@@ -150,8 +150,9 @@ agent the next step needs ("Who wakes when", below).
 | tester | OpenClaw | `gemma4:31b` (Google) | Tests each PR branch. Passes it on, or sends it back with evidence. Files bugs |
 | reviewer | Hermes | `gemini-2.5-flash` (Google) | Reads each tested PR against its issue and `SPEC.md`. Approves, or sends it back with a reason |
 
-All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer. Ollama has two keys:
-`OLLAMA_API_KEY` first, `OLLAMA_API_KEY_2` while the first is rate-limited (DECISIONS #43).
+All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer. Ollama has several keys:
+`OLLAMA_API_KEY` first, then `OLLAMA_API_KEY_2`, `_3`, …, each tried while the ones before it are rate-limited
+(DECISIONS #43, #44).
 Neither check on a PR uses the builders' model family (OpenAI): the tester runs the code, the reviewer (Google) reads it.
 The reviewer also differs from the orchestrator (NVIDIA), so it doesn't share the orchestrator's reading of the spec.
 

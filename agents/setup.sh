@@ -59,17 +59,24 @@ openclaw approvals set --file ~/.openclaw/approvals.json >/dev/null
 openclaw config validate
 echo "  allowlist: $(jq length <<<"$patterns") programs for ${OPENCLAW_AGENTS[*]}"
 
-# Ollama keys as saved auth profiles: OLLAMA_API_KEY first, then OLLAMA_API_KEY_2 if it is set. OpenClaw moves to the
-# next profile while one is rate-limited and comes back after its cooldown (DECISIONS #43). Keys go in on stdin.
+# Ollama keys as saved auth profiles, in order: OLLAMA_API_KEY, OLLAMA_API_KEY_2, _3, … up to the first one not set,
+# as Hermes reads them. OpenClaw moves to the next profile while one is rate-limited and comes back after its cooldown,
+# so a run tries every key before it gives up (DECISIONS #43, #44). Keys go in on stdin.
+keys=(OLLAMA_API_KEY)
+n=2; v=OLLAMA_API_KEY_$n
+while [ -n "${!v:-}" ]; do keys+=("$v"); n=$((n + 1)); v=OLLAMA_API_KEY_$n; done
 for agent in "${OPENCLAW_AGENTS[@]}"; do
-  order=(ollama-cloud:primary)
-  printf '%s\n' "$OLLAMA_API_KEY" | openclaw models auth --agent "$agent" paste-api-key \
-    --provider ollama-cloud --profile-id ollama-cloud:primary >/dev/null 2>&1
-  if [ -n "${OLLAMA_API_KEY_2:-}" ]; then
-    printf '%s\n' "$OLLAMA_API_KEY_2" | openclaw models auth --agent "$agent" paste-api-key \
-      --provider ollama-cloud --profile-id ollama-cloud:secondary >/dev/null 2>&1
-    order+=(ollama-cloud:secondary)
-  fi
+  order=()
+  for var in "${keys[@]}"; do
+    case $var in
+      OLLAMA_API_KEY)   id=ollama-cloud:primary ;;
+      OLLAMA_API_KEY_2) id=ollama-cloud:secondary ;;
+      *)                id=ollama-cloud:key${var##*_} ;;
+    esac
+    printf '%s\n' "${!var}" | openclaw models auth --agent "$agent" paste-api-key \
+      --provider ollama-cloud --profile-id "$id" >/dev/null 2>&1
+    order+=("$id")
+  done
   openclaw models auth --agent "$agent" order set --provider ollama-cloud "${order[@]}" >/dev/null 2>&1
 done
 echo "  Ollama keys, in order: ${order[*]#ollama-cloud:}"
@@ -77,8 +84,8 @@ echo "  Ollama keys, in order: ${order[*]#ollama-cloud:}"
 # ---------------------------------------------------------------- Hermes
 
 echo "== Hermes"
-# Hermes puts OLLAMA_API_KEY_2, when it is set, into its ollama-cloud key pool by itself, after OLLAMA_API_KEY,
-# and moves to it once the first is used up (DECISIONS #43).
+# Hermes puts OLLAMA_API_KEY_2, _3, … (up to the first one not set) into its ollama-cloud key pool by itself, after
+# OLLAMA_API_KEY, and moves down the pool as each is used up (DECISIONS #43, #44).
 for agent in "${HERMES_AGENTS[@]}"; do
   [ -d ~/.hermes/profiles/"$agent" ] ||
     hermes profile create "$agent" --no-alias --description "daily-briefing $agent" >/dev/null
