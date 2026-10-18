@@ -95,8 +95,12 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
                 )
         else:
             # Explicit day parameter – enforce bounds.
-            # Future days (including today via the query param) are not allowed.
-            if day_param >= today:
+            # Future days (including today) are not allowed. The ingest job
+            # runs after UTC midnight, so the most recent **complete** data
+            # corresponds to the day before yesterday. Therefore we disallow
+            # any day greater than ``today - 2``.
+            latest_allowed_day = today - timedelta(days=2)
+            if day_param > latest_allowed_day:
                 abort(404, description="Cannot view future days.")
             # Days before the earliest available day are not allowed.
             if oldest_day and day_param < oldest_day:
