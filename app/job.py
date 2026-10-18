@@ -87,8 +87,13 @@ def run(trigger: str = "schedule", run_id: int | None = None) -> None:
         seen_ids = {row[0] for row in cur.fetchall()}
         new_papers = [p for p in papers if p["stable_id"] not in seen_ids]
 
-        # Save all fetched papers (the spec says to call ``save_papers`` with the full list).
-        db.save_papers(run_id, papers)
+        # Save all fetched papers. In this ticket we do **not** yet assign a
+        # list day to each paper; that will be done in the follow-up job ticket
+        # together with the tester's behaviour tests. For now we call
+        # ``save_papers`` without a ``list_day`` so the new ``paper_list_days``
+        # table is not populated.
+        db.save_papers(run_id, papers, list_day=None)
+        # Record the run outcome with the count of new papers.
         db.finish_run(run_id, new_count=len(new_papers))
     finally:
         # Release the lock – ignore errors if the file was already removed.

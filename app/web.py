@@ -95,8 +95,10 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
                 )
         else:
             # Explicit day parameter – enforce bounds.
-            if day_param > today:
+            # Future days (including today via the query param) are not allowed.
+            if day_param >= today:
                 abort(404, description="Cannot view future days.")
+            # Days before the earliest available day are not allowed.
             if oldest_day and day_param < oldest_day:
                 abort(404, description="No papers before this date.")
             selected_day = day_param
@@ -104,7 +106,10 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
             if not papers:
                 # No papers for the requested day – spec rule 11: show friendly line.
                 if selected_day == today:
-                    briefing_msg = "No papers for today yet. arXiv posts new papers each evening; the next check is at 02:00 UTC."
+                    briefing_msg = (
+                        "No papers for today yet. arXiv posts new papers each evening; "
+                        "the next check is at 02:00 UTC."
+                    )
                 else:
                     briefing_msg = f"No new papers from {_format_day(selected_day)}."
             else:
