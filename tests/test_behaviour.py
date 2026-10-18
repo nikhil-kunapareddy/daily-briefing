@@ -45,7 +45,8 @@ def test_behaviour_full_flow(temp_data_dir):
         {"stable_id": "2610.10005", "version": "v1", "title": "Fifth Paper Title", "pdf_link": "...", "published": "...", "updated": "..."},
     ]
 
-    with patch("app.arxiv.fetch", return_value=fixture_papers):
+    with patch("app.arxiv.fetch", return_value=fixture_papers), \
+         patch("app.arxiv.fetch_list_day", return_value=fixture_papers):
         job.run(trigger="schedule")
         
         latest = db.latest_briefing()
@@ -65,7 +66,8 @@ def test_behaviour_full_flow(temp_data_dir):
             {"stable_id": "2610.10001", "version": "v2", "title": "First Paper Title v2", "pdf_link": "...", "published": "...", "updated": "..."},
             {"stable_id": "2610.10006", "version": "v1", "title": "Sixth Paper", "pdf_link": "...", "published": "...", "updated": "..."},
         ]
-        with patch("app.arxiv.fetch", return_value=updated_papers):
+        with patch("app.arxiv.fetch", return_value=updated_papers), \
+             patch("app.arxiv.fetch_list_day", return_value=updated_papers):
             job.run(trigger="schedule")
             
             latest = db.latest_briefing()
@@ -79,7 +81,7 @@ def test_behaviour_fetch_failures(temp_data_dir):
     """
     Tests that failed fetches, empty responses, and arXiv errors are saved as failed runs.
     """
-    with patch("app.arxiv.fetch", side_effect=RuntimeError("Request error")):
+    with patch("app.arxiv.fetch_list_day", side_effect=RuntimeError("Request error")):
         job.run(trigger="schedule")
         
     runs = db.latest_runs(limit=1)
@@ -87,14 +89,14 @@ def test_behaviour_fetch_failures(temp_data_dir):
     assert runs[0]["ok"] is False
     assert "Request error" in runs[0]["error_short"]
 
-    with patch("app.arxiv.fetch", side_effect=RuntimeError("No entries in response")):
+    with patch("app.arxiv.fetch_list_day", side_effect=RuntimeError("No entries in response")):
         job.run(trigger="schedule")
         
     runs = db.latest_runs(limit=1)
     assert runs[0]["ok"] is False
     assert "No entries in response" in runs[0]["error_short"]
 
-    with patch("app.arxiv.fetch", side_effect=RuntimeError("ArXiv error entry encountered")):
+    with patch("app.arxiv.fetch_list_day", side_effect=RuntimeError("ArXiv error entry encountered")):
         job.run(trigger="schedule")
         
     runs = db.latest_runs(limit=1)
@@ -120,7 +122,8 @@ def test_behaviour_healthz(app_client, temp_data_dir):
     assert resp.status_code == 200
     assert resp.get_json() == {}
 
-    with patch("app.arxiv.fetch", return_value=[{"stable_id": "1", "version": "v1", "title": "T", "pdf_link": "L", "published": "P", "updated": "U"}]):
+    with patch("app.arxiv.fetch", return_value=[{"stable_id": "1", "version": "v1", "title": "T", "pdf_link": "L", "published": "P", "updated": "U"}]), \
+         patch("app.arxiv.fetch_list_day", return_value=[{"stable_id": "1", "version": "v1", "title": "T", "pdf_link": "L", "published": "P", "updated": "U"}]):
         job.run(trigger="schedule")
     
     resp = app_client.get("/healthz")
@@ -135,7 +138,7 @@ def test_behaviour_healthz_failed_run(app_client, temp_data_dir):
     Per SPEC rule 17: healthz returns 200 with JSON when the app can read its database.
     The JSON contains the latest run's time and status ("ok" or "error").
     """
-    with patch("app.arxiv.fetch", side_effect=RuntimeError("Failed")):
+    with patch("app.arxiv.fetch_list_day", side_effect=RuntimeError("Failed")):
         job.run(trigger="schedule")
     
     resp = app_client.get("/healthz")
