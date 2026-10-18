@@ -95,8 +95,11 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
                 )
         else:
             # Explicit day parameter – enforce bounds.
-            # Future days (including today via the query param) are not allowed.
-            if day_param >= today:
+            # Future days are not allowed. The special case of `day` equal to
+            # today should behave the same as omitting the parameter – it must
+            # **not** be treated as a future day. Therefore we only abort when
+            # the requested day is strictly greater than today.
+            if day_param > today:
                 abort(404, description="Cannot view future days.")
             # Days before the earliest available day are not allowed.
             if oldest_day and day_param < oldest_day:
