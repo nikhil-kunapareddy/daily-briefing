@@ -1,8 +1,9 @@
 """arXiv fetching utilities for the ingest lane.
 
-The function :func:`fetch` performs a single HTTP request to the arXiv API to
-retrieve the five newest submissions in the ``cs.MA`` category.  It follows the
-behaviour required by issue #12:
+The function :func:`fetch_list_day` performs a single HTTP request to the arXiv API to
+retrieve the five newest submissions in the ``cs.MA`` category for a specific list day.
+The legacy :func:`fetch` retrieves the five newest overall (used when no list day is missing
+and we need to re-fetch the latest list day). Both follow the behaviour required by the spec:
 
 * The request URL is built from ``app.config.ARXIV_API_URL`` and the query
   parameters defined in the specification.
@@ -24,7 +25,7 @@ from __future__ import annotations
 import time
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta, timezone
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
@@ -32,53 +33,44 @@ import requests
 from . import config
 
 _ARXIV_ERROR_PREFIX = "https://arxiv.org/api/errors"
+_NY_TZ = ZoneInfo("America/New_York")
 
 
-def _build_url() -> str:
-    """Construct the base URL for fetching the *latest* five ``cs.MA`` submissions.
+def _subtract_weekdays(d: date, n: int) -> date:
+    """Subtract ``n`` weekdays from ``d``, skipping Saturday and Sunday."""
+    while n > 0:
+        d -= timedelta(days=1)
+        if d.weekday() < 5:  # Monday=0 .. Friday=4
+            n -= 1
+    return d
 
-    Used by the legacy :func:`fetch` which does not take a ``list_day``.
+
+def _build_date_range(list_day: str | date) -> Tuple[str, str]:
+    """Return start and end strings in ``YYYYMMDDHHMM`` UTC for the given ``list_day``.
+
+    The ``list_day`` is a weekday (Monday–Friday). The window is defined by the spec:
+    from 14:00 New York time on the weekday two weekdays before ``list_day``
+    to 13:59 on the weekday before ``list_day``.
     """
-    params = (
-        "search_query=cat:cs.MA",
-        "sortBy=submittedDate",
-        "sortOrder=descending",
-        "max_results=5",
-    )
-    return f"{config.ARXIV_API_URL}?{'&'.join(params)}"
-
-
-def _build_date_range(list_day: str) -> tuple[str, str]:
-    """Return start and end ISO‑8601 UTC strings for the given ``list_day``.
-
-    The ``list_day`` is interpreted in the America/New_York timezone. Supported
-    weekdays are Friday, Monday, and Tuesday, with windows defined by the spec.
-    """
-    ny_tz = ZoneInfo("America/New_York")
     if isinstance(list_day, str):
-        try:
-            day = date.fromisoformat(list_day)
-        except Exception as exc:
-            raise ValueError(f"Invalid list_day '{list_day}': {exc}") from exc
+        day = date.fromisoformat(list_day)
     else:
         day = list_day
 
-    wd = day.weekday()
-    if wd == 4:  # Friday
-        start_local = datetime.combine(day - timedelta(days=2), datetime.min.time()).replace(hour=14, tzinfo=ny_tz)
-        end_local = datetime.combine(day - timedelta(days=1), datetime.min.time()).replace(hour=13, minute=59, tzinfo=ny_tz)
-    elif wd == 0:  # Monday
-        start_local = datetime.combine(day - timedelta(days=4), datetime.min.time()).replace(hour=14, tzinfo=ny_tz)
-        end_local = datetime.combine(day - timedelta(days=3), datetime.min.time()).replace(hour=13, minute=59, tzinfo=ny_tz)
-    elif wd == 1:  # Tuesday
-        start_local = datetime.combine(day - timedelta(days=4), datetime.min.time()).replace(hour=14, tzinfo=ny_tz)
-        end_local = datetime.combine(day - timedelta(days=1), datetime.min.time()).replace(hour=13, minute=59, tzinfo=ny_tz)
-    else:
-        raise ValueError("fetch_list_day only supports Friday, Monday, or Tuesday list days")
+    if day.weekday() >= 5:
+        raise ValueError("list_day must be a weekday (Monday–Friday)")
 
-    start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
-    end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds") + "Z"
-    return start_utc, end_utc
+    # Compute start and end in New York time.
+    start_local = datetime.combine(_subtract_weekdays(day, 2), datetime.min.time()).replace(hour=14, tzinfo=_NY_TZ)
+    end_local = datetime.combine(_subtract_weekdays(day, 1), datetime.min.time()).replace(hour=13, minute=59, tzinfo=_NY_TZ)
+
+    # Convert to UTC and format as YYYYMMDDHHMM (no dashes, colons, seconds, Z).
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+
+    start_str = start_utc.strftime("%Y%m%d%H%M")
+    end_str = end_utc.strftime("%Y%m%d%H%M")
+    return start_str, end_str
 
 
 def fetch_list_day(list_day: str) -> List[Dict[str, str]]:
@@ -89,8 +81,8 @@ def fetch_list_day(list_day: str) -> List[Dict[str, str]]:
     timeout, pauses 3 seconds after a successful fetch, and returns parsed paper
     dicts. Errors raise ``RuntimeError``.
     """
-    start_iso, end_iso = _build_date_range(list_day)
-    date_query = f"submittedDate:[{start_iso} TO {end_iso}]"
+    start_str, end_str = _build_date_range(list_day)
+    date_query = f"submittedDate:[{start_str}+TO+{end_str}]"
     params = (
         f"search_query=cat:cs.MA+AND+{date_query}",
         "sortBy=submittedDate",
@@ -151,8 +143,17 @@ def fetch_list_day(list_day: str) -> List[Dict[str, str]]:
 
 
 def fetch() -> List[Dict[str, str]]:
-    """Legacy helper – fetch the latest five papers (no list_day)."""
-    url = _build_url()
+    """Legacy helper – fetch the latest five papers (no list_day).
+
+    Kept for compatibility; the job now re-fetches the latest list day instead.
+    """
+    params = (
+        "search_query=cat:cs.MA",
+        "sortBy=submittedDate",
+        "sortOrder=descending",
+        "max_results=5",
+    )
+    url = f"{config.ARXIV_API_URL}?{'&'.join(params)}"
     headers = {"User-Agent": config.USER_AGENT}
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -203,4 +204,3 @@ def fetch() -> List[Dict[str, str]]:
             }
         )
     return papers
-

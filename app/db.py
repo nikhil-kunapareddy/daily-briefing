@@ -308,8 +308,8 @@ def fetched_list_days() -> List[str]:
     """Return a list of ISO‑format ``list_day`` strings for successful runs.
 
     The function queries distinct ``list_day`` values from the new
-    ``paper_list_days`` table where the associated run succeeded. The result is
-    sorted chronologically (oldest first) as required by the spec.
+    ``paper_list_days`` table where the associated run succeeded and finished.
+    The result is sorted chronologically (oldest first) as required by the spec.
     """
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
@@ -319,7 +319,7 @@ def fetched_list_days() -> List[str]:
         SELECT DISTINCT pld.list_day
         FROM paper_list_days pld
         JOIN runs r ON pld.run_id = r.id
-        WHERE r.error IS NULL
+        WHERE r.error IS NULL AND r.finished_at IS NOT NULL
         ORDER BY pld.list_day ASC
         """
     )
