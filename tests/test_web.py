@@ -302,6 +302,30 @@ def test_responsive_classes_present():
     assert b'data-label="RESULT"' in resp.data
 
 
+def test_today_param_shows_same_as_root():
+    """Ensure that requesting the page with ``?day=<today>`` returns a 200
+    response and displays the same primary content as the root ``/``.
+
+    The bug described in issue #67 caused a 404 for the today parameter,
+    breaking the right‑arrow navigation from yesterday's page. The fix is
+    simply to allow ``day_param == today`` (the existing ``>`` check) and to
+    render the page identically to the base route.
+    """
+    client = app.test_client()
+    # No runs exist yet – both endpoints should show the placeholder message.
+    resp_root = client.get("/")
+    # Use the helper to get today's UTC date string.
+    # Import the helper from the app to obtain the UTC today used by the server.
+    from app.web import _today_utc
+    today_str = _today_utc().isoformat()
+    resp_today = client.get(f"/?day={today_str}")
+    assert resp_root.status_code == 200
+    assert resp_today.status_code == 200
+    # The bodies should contain the same placeholder text.
+    assert b"No data available yet" in resp_root.data
+    assert b"No data available yet" in resp_today.data
+
+
 def test_paper_title_bold():
     client = app.test_client()
     run_id = db.start_manual_run()
