@@ -20,7 +20,8 @@
           { id: "nemotron-3-ultra", name: "nemotron-3-ultra", contextWindow: 262144, maxTokens: 32768, reasoning: true },
         ],
       },
-      // google (GEMINI_API_KEY) and openrouter (OPENROUTER_API_KEY) are built in.
+      // google (GEMINI_API_KEY), openrouter (OPENROUTER_API_KEY) and anthropic (ANTHROPIC_API_KEY) are built in.
+      // anthropic is the one paid provider: it comes right after the Ollama models (DECISIONS #45).
     },
   },
 
@@ -39,8 +40,8 @@
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
           // gpt-oss sometimes writes a tool call as text; the retry runs on nemotron-3-ultra (3/3 in the test), which
-          // also keeps builders out of the reviewer's model family (Google).
-          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-2.5-flash"],
+          // also keeps builders out of the reviewer's model family (Google). Then Claude, paid (DECISIONS #45).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "anthropic/claude-sonnet-5-5", "google/gemini-2.5-flash"],
         },
         // Only the tools a builder needs: fewer tools, a smaller prompt. Tool Search stays on: gpt-oss called tools
         // correctly 7 of 9 times with it, 2 of 8 without it (2026-10-14).
@@ -55,8 +56,8 @@
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
           // gpt-oss sometimes writes a tool call as text; the retry runs on nemotron-3-ultra (3/3 in the test), which
-          // also keeps builders out of the reviewer's model family (Google).
-          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-2.5-flash"],
+          // also keeps builders out of the reviewer's model family (Google). Then Claude, paid (DECISIONS #45).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "anthropic/claude-sonnet-5-5", "google/gemini-2.5-flash"],
         },
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
                  exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
@@ -69,8 +70,8 @@
         model: {
           primary: "ollama-cloud/gpt-oss:120b",
           // gpt-oss sometimes writes a tool call as text; the retry runs on nemotron-3-ultra (3/3 in the test), which
-          // also keeps builders out of the reviewer's model family (Google).
-          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-2.5-flash"],
+          // also keeps builders out of the reviewer's model family (Google). Then Claude, paid (DECISIONS #45).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "anthropic/claude-sonnet-5-5", "google/gemini-2.5-flash"],
         },
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],
                  exec: { mode: "allowlist" }, fs: { workspaceOnly: true } },
@@ -83,7 +84,8 @@
         model: {
           primary: "ollama-cloud/gemma4:31b",
           // No gemini-2.5-flash: its free tier allows 20 requests a day, shared with the reviewer (DECISIONS #42).
-          fallbacks: ["ollama-cloud/nemotron-3-ultra", "google/gemini-3.5-flash-lite",
+          // After the Ollama models, Claude, paid (DECISIONS #45).
+          fallbacks: ["ollama-cloud/nemotron-3-ultra", "anthropic/claude-haiku-5-5", "google/gemini-3.5-flash-lite",
                       "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter/google/gemma-4-31b-it:free"],
         },
         tools: { allow: ["exec", "process", "read", "write", "edit", "apply_patch"],

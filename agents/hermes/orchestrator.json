@@ -2,6 +2,7 @@
   "model.provider": "ollama-cloud",
   "model.default": "nemotron-3-ultra",
   "fallback_providers": [
+    { "provider": "anthropic", "model": "claude-opus-5-5" },
     { "provider": "openrouter", "model": "nvidia/nemotron-3-ultra-550b-a55b:free" },
     { "provider": "gemini", "model": "gemini-2.5-flash" }
   ],

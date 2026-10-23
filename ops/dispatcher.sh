@@ -362,7 +362,7 @@ cool_down() {
 **$agent can't reach any of its models: they are all rate-limited.**
 
 - **When:** $(now), working on $key. That item keeps its labels and waits; no failure is counted.
-- **Models:** its main model and both backups (WORKFLOW.md, Team). The runtime moves down that list before it gives up.
+- **Models:** its main model and all its backups (WORKFLOW.md, Team). The runtime moves down that list before it gives up.
 - **Last error:** \`$(rate_limit_error "$agent" "$out")\`
 
 **What the dispatcher does:** it skips $agent until $(date -u -d "@$until" +%H:%M) UTC, then tries again,

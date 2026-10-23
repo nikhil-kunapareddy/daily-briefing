@@ -58,7 +58,7 @@ flowchart TD
     K["Wakes one agent for the next step<br/>the moment the last run ends<br/>(cron every 2 min: CI results, your merges)"]
     P["Wake-up message: task · rules · signature<br/>kept lessons + new ones"]
     MO{{"Main model answers?"}}
-    BK{{"1st, then 2nd backup answers?"}}
+    BK{{"A backup answers, in order?"}}
     DN(["Run done: labels, commits, comments"])
     LG["Logged: model · tokens · tools<br/>token report on each closed ticket"]
     RL(["All rate-limited: only this agent pauses<br/>15 → 30 → 60 → 120 min · ticket for you"])
@@ -150,38 +150,44 @@ agent the next step needs ("Who wakes when", below).
 | tester | OpenClaw | `gemma4:31b` (Google) | Tests each PR branch. Passes it on, or sends it back with evidence. Files bugs |
 | reviewer | Hermes | `gemini-2.5-flash` (Google) | Reads each tested PR against its issue and `SPEC.md`. Approves, or sends it back with a reason |
 
-All models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer. Ollama has several keys:
+Most models are on free plans: Ollama Cloud for most agents, the Gemini API for the reviewer. Ollama has several keys:
 `OLLAMA_API_KEY` first, then `OLLAMA_API_KEY_2`, `_3`, …, each tried while the ones before it are rate-limited
-(DECISIONS #43, #44).
+(DECISIONS #43, #44). Right after its Ollama models, every agent falls back to a Claude model on a paid Anthropic key
+(`ANTHROPIC_API_KEY`), the one exception to the free stack (DECISIONS #45).
 Neither check on a PR uses the builders' model family (OpenAI): the tester runs the code, the reviewer (Google) reads it.
 The reviewer also differs from the orchestrator (NVIDIA), so it doesn't share the orchestrator's reading of the spec.
 
 Models and fallbacks, used when a model is rate-limited or down:
 
-| Agent | Main model | 1st backup | 2nd backup |
-|---|---|---|---|
-| orchestrator | `nemotron-3-ultra` (Ollama) | `nemotron-3-ultra:free` (OpenRouter) | `gemini-2.5-flash` (Gemini API) |
-| builder-ingest, builder-web, builder-ops | `gpt-oss:120b` (Ollama) | `nemotron-3-ultra` (Ollama) | `gemini-2.5-flash` (Gemini API) |
-| tester | `gemma4:31b` (Ollama) | `nemotron-3-ultra` (Ollama) | `gemini-3.5-flash-lite` (Gemini API) |
-| reviewer | `gemini-2.5-flash` (Gemini API) | `gemini-3.5-flash-lite` (Gemini API) | `gemma4:31b` (Ollama) |
+| Agent | Main model | Backups, in order |
+|---|---|---|
+| orchestrator | `nemotron-3-ultra` (Ollama) | `claude-opus-5-5` (Anthropic) · `nemotron-3-ultra:free` (OpenRouter) · `gemini-2.5-flash` (Gemini API) |
+| builder-ingest, builder-web, builder-ops | `gpt-oss:120b` (Ollama) | `nemotron-3-ultra` (Ollama) · `claude-sonnet-5-5` (Anthropic) · `gemini-2.5-flash` (Gemini API) |
+| tester | `gemma4:31b` (Ollama) | `nemotron-3-ultra` (Ollama) · `claude-haiku-5-5` (Anthropic) · `gemini-3.5-flash-lite` (Gemini API) · `nemotron-3-ultra:free`, then `gemma-4-31b-it:free` (OpenRouter) |
+| reviewer | `gemini-2.5-flash` (Gemini API) | `gemini-3.5-flash-lite` (Gemini API) · `gemma4:31b` (Ollama) · `claude-opus-5-5` (Anthropic) |
 
-- The tester has two more backups, both on OpenRouter: `nemotron-3-ultra:free`, then `gemma-4-31b-it:free` (DECISIONS #42).
-- After a failed run, the dispatcher retries it once on the **1st backup**.
+- Claude models follow the roles: the strongest (`claude-opus-5-5`) plans and reviews, a mid one builds, the cheapest tests (DECISIONS #45).
+- After a failed run, the dispatcher retries it once on the **1st backup**. For the orchestrator that is `claude-opus-5-5`.
 - The runtime falls back on its own (1st, then 2nd backup, and so on) when a model is rate-limited or down.
-- All three reviewer models are Google, so a fallback never reviews with the builders' model family.
+- The reviewer's first three models are Google. Only when it is on its last backup and the builder was on Claude does a PR
+  get reviewed by the model family that wrote it.
 
 Context window of each model: the most tokens one request can hold (prompt, files, history and the reply).
-From each provider's API on 2026-10-15 (Ollama `/api/show`, OpenRouter `/models`, Gemini `models.get`).
+From each provider's API on 2026-10-15 (Ollama `/api/show`, OpenRouter `/models`, Gemini `models.get`); Claude from
+Anthropic's model list on 2026-10-23.
 
 | Model | Provider | Context window | Used by |
 |---|---|---:|---|
 | `gpt-oss:120b` | Ollama Cloud | 131,072 (128k) | builders (main) |
 | `nemotron-3-ultra` | Ollama Cloud | 262,144 (256k) | orchestrator (main), builders and tester (1st backup) |
 | `gemma4:31b` | Ollama Cloud | 262,144 (256k) | tester (main), reviewer (2nd backup) |
-| `nemotron-3-ultra:free` | OpenRouter | 1,000,000 (1M) | orchestrator (1st backup), tester (3rd backup) |
-| `gemma-4-31b-it:free` | OpenRouter | 262,144 (256k) | tester (4th backup) |
-| `gemini-2.5-flash` | Gemini API | 1,048,576 (1M) | reviewer (main), orchestrator and builders (2nd backup) |
-| `gemini-3.5-flash-lite` | Gemini API | 1,048,576 (1M) | reviewer (1st backup), tester (2nd backup) |
+| `nemotron-3-ultra:free` | OpenRouter | 1,000,000 (1M) | orchestrator (2nd backup), tester (4th backup) |
+| `gemma-4-31b-it:free` | OpenRouter | 262,144 (256k) | tester (5th backup) |
+| `gemini-2.5-flash` | Gemini API | 1,048,576 (1M) | reviewer (main), orchestrator and builders (3rd backup) |
+| `gemini-3.5-flash-lite` | Gemini API | 1,048,576 (1M) | reviewer (1st backup), tester (3rd backup) |
+| `claude-opus-5-5` | Anthropic (paid) | 1M | orchestrator (1st backup), reviewer (3rd backup) |
+| `claude-sonnet-5-5` | Anthropic (paid) | 1M | builders (2nd backup) |
+| `claude-haiku-5-5` | Anthropic (paid) | 1M | tester (2nd backup) |
 
 The tightest is `gpt-oss:120b`, the builders' main model, at 128k: keep reads to the files the ticket needs.
 

@@ -22,12 +22,12 @@ Numbers below are as of Oct 16, about 21:15 UTC. Tokens per PR: [`tokens_report.
 
 | Agent | Runtime | Role | Main model (backups) | Tools |
 |---|---|---|---|---|
-| orchestrator | Hermes | Splits tickets, assigns them, re-queues work | `nemotron-3-ultra` (`nemotron-3-ultra:free`, `gemini-2.5-flash`) | 7: `terminal`, `process_manage`, `read_file`, `write_file`, `patch`, `search_files`, `todo_list` |
-| builder-ingest | OpenClaw | arXiv request, the run, the database | `gpt-oss:120b` (`nemotron-3-ultra`, `gemini-2.5-flash`) | 9: `read`, `write`, `edit`, `apply_patch`, `exec`, `process`, `tool_search`, `tool_describe`, `tool_call` |
+| orchestrator | Hermes | Splits tickets, assigns them, re-queues work | `nemotron-3-ultra` (`claude-opus-5-5`, `nemotron-3-ultra:free`, `gemini-2.5-flash`) | 7: `terminal`, `process_manage`, `read_file`, `write_file`, `patch`, `search_files`, `todo_list` |
+| builder-ingest | OpenClaw | arXiv request, the run, the database | `gpt-oss:120b` (`nemotron-3-ultra`, `claude-sonnet-5-5`, `gemini-2.5-flash`) | 9: `read`, `write`, `edit`, `apply_patch`, `exec`, `process`, `tool_search`, `tool_describe`, `tool_call` |
 | builder-web | OpenClaw | The page, Run now, `/healthz` | `gpt-oss:120b` (same as above) | same 9 |
 | builder-ops | OpenClaw | `scripts/install.sh`: the app as a service on the VM, and its cron line | `gpt-oss:120b` (same as above) | same 9 |
-| tester | OpenClaw | Runs each PR on test data; passes it or sends it back with evidence; files bugs | `gemma4:31b` (`nemotron-3-ultra`, `gemini-3.5-flash-lite`, 2 OpenRouter free models) | same 9 |
-| reviewer | Hermes | Reads each tested PR against its ticket and `SPEC.md`; approves or sends it back | `gemini-2.5-flash` (`gemini-3.5-flash-lite`, `gemma4:31b`) | same 7 as the orchestrator |
+| tester | OpenClaw | Runs each PR on test data; passes it or sends it back with evidence; files bugs | `gemma4:31b` (`nemotron-3-ultra`, `claude-haiku-5-5`, `gemini-3.5-flash-lite`, 2 OpenRouter free models) | same 9 |
+| reviewer | Hermes | Reads each tested PR against its ticket and `SPEC.md`; approves or sends it back | `gemini-2.5-flash` (`gemini-3.5-flash-lite`, `gemma4:31b`, `claude-opus-5-5`) | same 7 as the orchestrator |
 
 Limits on the tools: OpenClaw's `exec` runs only 45 allowlisted programs (git, gh, python, curl, sqlite3, …) and its
 file tools stay in the agent's own folder. Hermes's `terminal` has no allowlist, only its "smart" approvals. No agent
@@ -38,7 +38,9 @@ access; it can't push to `main` or merge. Each agent commits under its own name.
 systemd service, no sudo, safe to re-run) was the riskiest ticket for "it runs", and it was crowding builder-ingest's
 lane (`DECISIONS.md` #17). Models by role, all free: the strongest free model plans (`nemotron-3-ultra`, 550B), a
 cheaper one builds (`gpt-oss:120b`), and the two checks use other model families than the builders (OpenAI): the
-tester `gemma4:31b`, the reviewer `gemini-2.5-flash` (both Google). The VM is on AWS (the brief's plan B): Oracle had
+tester `gemma4:31b`, the reviewer `gemini-2.5-flash` (both Google). **One paid exception, added on Oct 23:** after its
+Ollama models, every agent falls back to a Claude model on a paid Anthropic key, because the free Ollama keys kept
+running out (`DECISIONS.md` #45). It breaks the brief's "No paid keys" rule, and I chose that knowingly. The VM is on AWS (the brief's plan B): Oracle had
 no capacity after 42 tries (`DECISIONS.md` #6, #7).
 
 **Who wrote what.** The agents wrote `app/`, `tests/`, `fixtures/` and `scripts/install.sh`. The human, with
@@ -314,7 +316,7 @@ Terraform 1.6+, an SSH key at `~/.ssh/confer_vm`, `gh` signed in as the repo's a
 
 | File | Keys |
 |---|---|
-| `agents.env` | `OLLAMA_API_KEY` (and `OLLAMA_API_KEY_2`, optional; `agents/setup.sh` loads only these two, so put a working key first), `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GH_TOKEN` (the bot account), `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
+| `agents.env` | `OLLAMA_API_KEY` (and `OLLAMA_API_KEY_2`, `_3`, …, optional, numbered without gaps), `ANTHROPIC_API_KEY` (paid, optional: the Claude fallbacks), `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GH_TOKEN` (the bot account), `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` |
 | `app.env` | `GEMINI_API_KEY` (not used by v1) |
 | `root.env` | `DUCKDNS_DOMAIN`, `DUCKDNS_TOKEN` |
 
