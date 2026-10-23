@@ -417,3 +417,92 @@ def test_oldest_paper_day_empty_database():
     result = db.oldest_paper_day()
     assert result is None
 
+
+def _paper(stable_id, published, version="v1", updated=None):
+    return {
+        "stable_id": stable_id,
+        "version": version,
+        "title": "Paper " + stable_id,
+        "pdf_link": "https://arxiv.org/pdf/" + stable_id + version + ".pdf",
+        "published": published,
+        "updated": updated or published,
+    }
+
+
+def test_papers_for_day_refetched_paper_shows_on_later_list_day():
+    """A paper fetched again for a later list day shows on that day (join on stable_id only)."""
+    p = _paper("2610.30001", "2026-10-14T12:00:00Z")
+    run1 = db.start_run("test")
+    db.save_papers(run1, [p], list_day="2026-10-15")
+    db.finish_run(run1, new_count=1)
+    run2 = db.start_run("test")
+    db.save_papers(run2, [p], list_day="2026-10-16")
+    db.finish_run(run2, new_count=0)
+
+    assert [r["stable_id"] for r in db.papers_for_day("2026-10-15")] == ["2610.30001"]
+    assert [r["stable_id"] for r in db.papers_for_day("2026-10-16")] == ["2610.30001"]
+    # Never by the submitted day once a list day exists.
+    assert db.papers_for_day("2026-10-14") == []
+
+
+def test_papers_for_day_falls_back_to_published_without_list_day_row():
+    run_id = db.start_run("test")
+    db.save_papers(run_id, [_paper("2610.30002", "2026-10-12T09:00:00Z")])
+    db.finish_run(run_id, new_count=1)
+
+    assert [r["stable_id"] for r in db.papers_for_day("2026-10-12")] == ["2610.30002"]
+    assert db.papers_for_day("2026-10-13") == []
+
+
+def test_papers_for_day_mixed_list_day_and_fallback():
+    run_id = db.start_run("test")
+    db.save_papers(run_id, [_paper("2610.30003", "2026-10-14T08:00:00Z")], list_day="2026-10-15")
+    db.save_papers(run_id, [_paper("2610.30004", "2026-10-15T10:00:00Z")])
+    db.finish_run(run_id, new_count=2)
+
+    result = db.papers_for_day("2026-10-15")
+    assert [r["stable_id"] for r in result] == ["2610.30004", "2610.30003"]
+
+
+def test_papers_for_day_one_row_per_paper_newest_version():
+    run1 = db.start_run("test")
+    db.save_papers(run1, [_paper("2610.30005", "2026-10-14T08:00:00Z")], list_day="2026-10-15")
+    db.finish_run(run1, new_count=1)
+    run2 = db.start_run("test")
+    db.save_papers(
+        run2,
+        [_paper("2610.30005", "2026-10-14T08:00:00Z", version="v2", updated="2026-10-15T08:00:00Z")],
+        list_day="2026-10-15",
+    )
+    db.finish_run(run2, new_count=0)
+
+    result = db.papers_for_day("2026-10-15")
+    assert len(result) == 1
+    assert result[0]["version"] == "v2"
+
+
+def test_oldest_paper_day_uses_list_day_not_published():
+    run_id = db.start_run("test")
+    db.save_papers(run_id, [_paper("2610.30006", "2026-10-01T08:00:00Z")], list_day="2026-10-15")
+    db.finish_run(run_id, new_count=1)
+    assert db.oldest_paper_day() == date(2026, 10, 15)
+
+
+def test_oldest_paper_day_ignores_failed_runs():
+    bad = db.start_run("test")
+    db.save_papers(bad, [_paper("2610.30007", "2026-10-01T08:00:00Z")], list_day="2026-10-05")
+    db.finish_run(bad, error="boom")
+    good = db.start_run("test")
+    db.save_papers(good, [_paper("2610.30008", "2026-10-14T08:00:00Z")], list_day="2026-10-15")
+    db.finish_run(good, new_count=1)
+    assert db.oldest_paper_day() == date(2026, 10, 15)
+
+
+def test_oldest_paper_day_falls_back_to_published_when_no_list_days():
+    run_id = db.start_run("test")
+    db.save_papers(
+        run_id,
+        [_paper("2610.30009", "2026-10-09T08:00:00Z"), _paper("2610.30010", "2026-10-11T08:00:00Z")],
+    )
+    db.finish_run(run_id, new_count=2)
+    assert db.oldest_paper_day() == date(2026, 10, 9)

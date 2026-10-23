@@ -11,6 +11,14 @@ os.environ["DAILY_BRIEFING_DATA"] = tempfile.gettempdir()
 from app.web import create_app
 from app import db, job
 
+def _seed_list_days(papers):
+    """Save papers as one successful run, each on the list day equal to its published day."""
+    run_id = db.start_run("schedule")
+    for p in papers:
+        db.save_papers(run_id, [p], list_day=p["published"][:10])
+    db.finish_run(run_id, new_count=len(papers))
+
+
 @pytest.fixture
 def temp_data_dir():
     """Create a temporary data directory for each test."""
@@ -44,9 +52,7 @@ def test_day_browsing_basic_listing(app_client, temp_data_dir):
         {"stable_id": "2610.10005", "version": "v1", "title": "Fifth Paper Title", "pdf_link": "https://arxiv.org/pdf/2610.10005v1.pdf", "published": "2026-10-14T12:00:00Z", "updated": "2026-10-14T12:00:00Z"},
     ]
 
-    with patch("app.arxiv.fetch", return_value=fixture_papers), \
-         patch("app.arxiv.fetch_list_day", return_value=fixture_papers):
-        job.run(trigger="schedule")
+    _seed_list_days(fixture_papers)
 
     # Check Oct 14
     resp = app_client.get("/?day=2026-10-14")
@@ -70,9 +76,7 @@ def test_day_browsing_arrows(app_client, temp_data_dir):
         {"stable_id": "2610.10001", "version": "v1", "title": "P1", "pdf_link": "L1", "published": "2026-10-10T12:00:00Z", "updated": "U1"},
         {"stable_id": "2610.10005", "version": "v1", "title": "P5", "pdf_link": "L5", "published": "2026-10-14T12:00:00Z", "updated": "U5"},
     ]
-    with patch("app.arxiv.fetch", return_value=fixture_papers), \
-         patch("app.arxiv.fetch_list_day", return_value=fixture_papers):
-        job.run(trigger="schedule")
+    _seed_list_days(fixture_papers)
 
     # Mock 'today' for the test
     today_str = "2026-10-16"
@@ -106,9 +110,7 @@ def test_day_browsing_no_papers(app_client, temp_data_dir):
     fixture_papers = [
         {"stable_id": "2610.10001", "version": "v1", "title": "P1", "pdf_link": "L1", "published": "2026-10-10T12:00:00Z", "updated": "U1"},
     ]
-    with patch("app.arxiv.fetch", return_value=fixture_papers), \
-         patch("app.arxiv.fetch_list_day", return_value=fixture_papers):
-        job.run(trigger="schedule")
+    _seed_list_days(fixture_papers)
 
     # Check a day with no papers (e.g., 2026-10-11)
     resp = app_client.get("/?day=2026-10-11")
@@ -129,9 +131,7 @@ def test_day_browsing_out_of_range(app_client, temp_data_dir):
     fixture_papers = [
         {"stable_id": "2610.10001", "version": "v1", "title": "P1", "pdf_link": "L1", "published": "2026-10-10T12:00:00Z", "updated": "U1"},
     ]
-    with patch("app.arxiv.fetch", return_value=fixture_papers), \
-         patch("app.arxiv.fetch_list_day", return_value=fixture_papers):
-        job.run(trigger="schedule")
+    _seed_list_days(fixture_papers)
 
     # Mock 'today' for the test
     with patch("app.web.datetime") as mock_datetime:
@@ -159,9 +159,7 @@ def test_day_browsing_run_history_consistency(app_client, temp_data_dir):
     fixture_papers = [
         {"stable_id": "2610.10001", "version": "v1", "title": "P1", "pdf_link": "L1", "published": "2026-10-10T12:00:00Z", "updated": "U1"},
     ]
-    with patch("app.arxiv.fetch", return_value=fixture_papers), \
-         patch("app.arxiv.fetch_list_day", return_value=fixture_papers):
-        job.run(trigger="schedule")
+    _seed_list_days(fixture_papers)
 
     # Check history on day 1
     resp1 = app_client.get("/?day=2026-10-10")
