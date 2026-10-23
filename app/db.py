@@ -345,13 +345,14 @@ def health() -> Optional[Dict[str, Any]]:
 
 
 def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
-    """Return papers published on the given UTC day, ordered newest first.
+    """Return the papers on arXiv's list for the given UTC day, newest first.
 
-    The function accepts either a ``date`` object or an ISO‑format ``YYYY‑MM‑DD``
-    string. It **does not** consider ``list_day`` – the web layer historically
-    displays papers based solely on their ``published`` timestamp. This aligns
-    with the acceptance criteria and avoids premature changes that belong to a
-    follow‑up ticket.
+    The function accepts either a ``date`` object or an ISO-format ``YYYY-MM-DD``
+    string. Papers are found through ``paper_list_days``, joined to ``papers``
+    on ``stable_id`` only (not ``run_id``), so a paper fetched again by a later
+    run for a later list day shows on that day. Papers that have no
+    ``paper_list_days`` row at all fall back to their ``published`` day. When a
+    paper has several saved versions, only the newest version is returned.
     """
     if isinstance(day, str):
         try:
@@ -365,12 +366,28 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
     day_str = day.isoformat()
     cur.execute(
         """
-        SELECT stable_id, version, title, pdf_link, published, updated
-        FROM papers
-        WHERE date(published) = ?
-        ORDER BY published DESC
+        SELECT p.stable_id, p.version, p.title, p.pdf_link, p.published, p.updated
+        FROM papers p
+        WHERE p.id = (
+                SELECT p2.id FROM papers p2
+                WHERE p2.stable_id = p.stable_id
+                ORDER BY p2.updated DESC, p2.id DESC
+                LIMIT 1
+              )
+          AND (
+                p.stable_id IN (
+                    SELECT stable_id FROM paper_list_days WHERE list_day = ?
+                )
+                OR (
+                    NOT EXISTS (
+                        SELECT 1 FROM paper_list_days d WHERE d.stable_id = p.stable_id
+                    )
+                    AND date(p.published) = ?
+                )
+              )
+        ORDER BY p.published DESC, p.stable_id DESC
         """,
-        (day_str,),
+        (day_str, day_str),
     )
     return [dict(r) for r in cur.fetchall()]
 
@@ -378,17 +395,34 @@ def papers_for_day(day: date | str) -> List[Dict[str, Any]]:
 def oldest_paper_day() -> Optional[date]:
     """Return the earliest day for which we have any paper information.
 
-    The web UI navigates based on the ``published`` date of papers. We therefore
-    determine the minimum date from the ``published`` column only, ignoring the
-    ``list_day`` information that is managed by a later ticket. If the database
-    is empty, ``None`` is returned.
+    This is the minimum ``list_day`` in ``paper_list_days`` (successful, finished
+    runs only). If there is none, it is the minimum ``published`` day over papers
+    that have no ``paper_list_days`` row. If neither exists, ``None`` is returned.
     """
     conn = _get_connection()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT MIN(date(published)) AS min_pub FROM papers")
+    cur.execute(
+        """
+        SELECT MIN(pld.list_day) AS min_day
+        FROM paper_list_days pld
+        JOIN runs r ON pld.run_id = r.id
+        WHERE r.error IS NULL AND r.finished_at IS NOT NULL
+        """
+    )
     row = cur.fetchone()
-    min_pub = row["min_pub"] if row and row["min_pub"] else None
-    if not min_pub:
-        return None
-    return date.fromisoformat(min_pub)
+    if row and row["min_day"]:
+        return date.fromisoformat(row["min_day"])
+    cur.execute(
+        """
+        SELECT MIN(date(p.published)) AS min_pub
+        FROM papers p
+        WHERE NOT EXISTS (
+            SELECT 1 FROM paper_list_days d WHERE d.stable_id = p.stable_id
+        )
+        """
+    )
+    row = cur.fetchone()
+    if row and row["min_pub"]:
+        return date.fromisoformat(row["min_pub"])
+    return None
