@@ -60,6 +60,20 @@ def _parse_day_param(day_str: str) -> date:
     return date.fromisoformat(day_str)
 
 
+def _empty_day_message(day: date, today: date) -> str:
+    """Return the rule 11 line for a day with no papers.
+
+    Saturdays and Sundays (arXiv posts no list) get the weekend line; today
+    (Monday to Friday) says the next check is at 02:00 UTC; any earlier
+    weekday says there were no new papers from that day.
+    """
+    if day.weekday() >= 5:
+        return "arXiv doesn't post new papers on Saturdays and Sundays."
+    if day == today:
+        return "No papers for today yet. The next check is at 02:00 UTC."
+    return f"No new papers from {_format_day(day)}."
+
+
 def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None) -> Dict[str, Any]:
     """Build the template context for the index page or rate-limited page.
 
@@ -89,10 +103,7 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
                 briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
             else:
                 # No papers for today – rule 11 line.
-                briefing_msg = (
-                    "No papers for today yet. arXiv posts new papers each evening; "
-                    "the next check is at 02:00 UTC."
-                )
+                briefing_msg = _empty_day_message(selected_day, today)
         else:
             # Explicit day parameter – enforce bounds.
             # Future days are not allowed. The special case of `day` equal to
@@ -108,13 +119,7 @@ def _build_context(day_param: Optional[date], run_now_wait: Optional[int] = None
             papers = db.papers_for_day(selected_day)
             if not papers:
                 # No papers for the requested day – spec rule 11: show friendly line.
-                if selected_day == today:
-                    briefing_msg = (
-                        "No papers for today yet. arXiv posts new papers each evening; "
-                        "the next check is at 02:00 UTC."
-                    )
-                else:
-                    briefing_msg = f"No new papers from {_format_day(selected_day)}."
+                briefing_msg = _empty_day_message(selected_day, today)
             else:
                 briefing_msg = f"{len(papers)} new paper{'s' if len(papers) != 1 else ''} from this day"
 

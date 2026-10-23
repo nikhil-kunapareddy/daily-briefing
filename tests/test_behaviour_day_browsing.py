@@ -112,8 +112,8 @@ def test_day_browsing_no_papers(app_client, temp_data_dir):
     ]
     _seed_list_days(fixture_papers)
 
-    # Check a day with no papers (e.g., 2026-10-11)
-    resp = app_client.get("/?day=2026-10-11")
+    # Check a weekday with no papers (Tue 13 Oct 2026)
+    resp = app_client.get("/?day=2026-10-13")
     assert resp.status_code == 200
     assert b"No new papers from" in resp.data
     # Papers table should not exist (but run history table should still be present)

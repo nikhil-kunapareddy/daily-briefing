@@ -122,7 +122,9 @@ def test_index_shows_first_run_message():
     assert b"10.48550/arXiv.2610.12345" in resp.data
 
 
-def test_index_shows_no_new_with_previous_briefing():
+def test_index_shows_no_new_with_previous_briefing(monkeypatch):
+    import app.web as webmod
+    monkeypatch.setattr(webmod, "_today_utc", lambda: date(2026, 10, 21))  # a Wednesday
     client = app.test_client()
     # First run with papers
     run_id1 = db.start_manual_run()
